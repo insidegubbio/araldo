@@ -1,0 +1,362 @@
+import { useAuth } from "@/_core/hooks/useAuth";
+import { startLogin } from "@/const";
+import { TopBar } from "@/components/TopBar";
+import { BottomNav } from "@/components/BottomNav";
+import { FileIcon } from "@/components/FileIcon";
+import { UploadDropzone } from "@/components/UploadDropzone";
+import { FloatingTabBar, type TabId } from "@/components/FloatingTabBar";
+import { GalleryView } from "@/components/GalleryView";
+import { AnalyticsView } from "@/components/AnalyticsView";
+import { SettingsView } from "@/components/SettingsView";
+import { trpc } from "@/lib/trpc";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Eye,
+  Loader2,
+  Search,
+  Trash2,
+  Upload,
+  FolderPlus,
+} from "lucide-react";
+import { useEffect, useState } from "react";
+import { useLocation } from "wouter";
+import { toast } from "sonner";
+import { formatDistanceToNow } from "date-fns";
+import { it } from "date-fns/locale";
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+}
+
+export default function Dashboard() {
+  const { user, isAuthenticated, loading } = useAuth();
+  const [, navigate] = useLocation();
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [showUpload, setShowUpload] = useState(false);
+  const [deleteKey, setDeleteKey] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<TabId>("files");
+  const [showNewFolder, setShowNewFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const pageSize = 20;
+
+  useEffect(() => {
+    if (!loading && !isAuthenticated) navigate("/login");
+  }, [isAuthenticated, loading, navigate]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const utils = trpc.useUtils();
+  const { data, isLoading, isFetching } = trpc.files.list.useQuery(
+    { search: debouncedSearch, page, pageSize },
+    { enabled: isAuthenticated, refetchOnWindowFocus: false }
+  );
+  const getDownloadUrl = trpc.files.getDownloadUrl.useMutation();
+  const deleteMutation = trpc.files.delete.useMutation({
+    onSuccess: () => {
+      toast.success("File eliminato");
+      utils.files.list.invalidate();
+      setDeleteKey(null);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const mkdirMutation = trpc.files.mkdir.useMutation({
+    onSuccess: () => {
+      toast.success("Cartella creata");
+      utils.files.list.invalidate();
+      setShowNewFolder(false);
+      setNewFolderName("");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const handleDownload = async (key: string, filename: string) => {
+    try {
+      const { downloadUrl } = await getDownloadUrl.mutateAsync({ key });
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = filename;
+      a.click();
+    } catch {
+      toast.error("Impossibile generare il link di download");
+    }
+  };
+
+  const handleCreateFolder = () => {
+    if (!newFolderName.trim()) {
+      toast.error("Nome cartella non valido");
+      return;
+    }
+    mkdirMutation.mutate({ folderName: newFolderName });
+  };
+
+  const totalPages = data ? Math.ceil(data.total / pageSize) : 0;
+  const isAdmin = user?.role === "admin";
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <TopBar />
+
+      <main className="flex-1 container py-6 pb-24 sm:pb-32">
+        <div className="flex items-start justify-between mb-8 gap-4">
+          <div>
+            <h1 className="font-serif text-3xl mb-1">File</h1>
+            <p className="text-muted-foreground text-sm">
+              {data ? `${data.total} file nel bucket` : "Caricamento…"}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => setShowNewFolder(true)}
+              className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg text-sm font-medium hover:bg-muted transition-colors"
+            >
+              <FolderPlus className="w-4 h-4" />
+              <span className="hidden sm:inline">Nuova cartella</span>
+            </button>
+            <button
+              onClick={() => setShowUpload((v) => !v)}
+              className="flex items-center gap-2 px-4 py-2 bg-foreground text-background rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
+            >
+              <Upload className="w-4 h-4" />
+              <span>Carica</span>
+            </button>
+          </div>
+        </div>
+
+        {activeTab === "files" && (
+          <>
+            {showUpload && (
+              <div className="mb-8 animate-fade-in">
+                <UploadDropzone
+                  onUploaded={() => {
+                    utils.files.list.invalidate();
+                    setShowUpload(false);
+                  }}
+                />
+              </div>
+            )}
+
+            <div className="relative mb-4">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Cerca file…"
+                className="pl-9"
+              />
+            </div>
+
+            <div className="border border-border rounded-xl overflow-hidden">
+              {isLoading ? (
+                <div className="divide-y divide-border">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-4 px-4 py-3">
+                      <Skeleton className="w-5 h-5 rounded" />
+                      <div className="flex-1 space-y-1.5">
+                        <Skeleton className="h-4 w-48" />
+                        <Skeleton className="h-3 w-32" />
+                      </div>
+                      <Skeleton className="h-4 w-16" />
+                    </div>
+                  ))}
+                </div>
+              ) : !data?.items.length ? (
+                <div className="py-16 text-center">
+                  <p className="text-muted-foreground text-sm">
+                    {search ? "Nessun file trovato" : "Nessun file nel bucket"}
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-border">
+                  {data.items.map((file) => (
+                    <div
+                      key={file.s3Key}
+                      className={`flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors group ${
+                        isFetching ? "opacity-70" : ""
+                      }`}
+                    >
+                      <FileIcon
+                        mimeType={file.mimeType}
+                        filename={file.filename}
+                        className="w-5 h-5 text-muted-foreground shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{file.filename}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatBytes(file.size)}
+                          {file.mimeType && (
+                            <span className="ml-2 hidden sm:inline">{file.mimeType}</span>
+                          )}
+                        </p>
+                      </div>
+                      <div className="text-xs text-muted-foreground hidden md:block shrink-0">
+                        {formatDistanceToNow(new Date(file.uploadedAt), {
+                          addSuffix: true,
+                          locale: it,
+                        })}
+                      </div>
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                        <button
+                          onClick={() => navigate(`/preview/${encodeURIComponent(file.s3Key)}`)}
+                          className="p-1.5 rounded hover:bg-muted transition-colors"
+                          title="Anteprima"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDownload(file.s3Key, file.filename)}
+                          className="p-1.5 rounded hover:bg-muted transition-colors"
+                          title="Scarica"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                        {isAdmin && (
+                          <button
+                            onClick={() => setDeleteKey(file.s3Key)}
+                            className="p-1.5 rounded hover:bg-muted transition-colors text-destructive"
+                            title="Elimina"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between mt-4">
+                <p className="text-xs text-muted-foreground">
+                  Pagina {page} di {totalPages}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page <= 1}
+                    className="p-2 rounded-md border border-border hover:bg-muted transition-colors disabled:opacity-40"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                    className="p-2 rounded-md border border-border hover:bg-muted transition-colors disabled:opacity-40"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {activeTab === "gallery" && <GalleryView items={data?.items ?? []} isLoading={isLoading} />}
+
+        {activeTab === "analytics" && <AnalyticsView />}
+
+        {activeTab === "settings" && <SettingsView />}
+      </main>
+
+      <BottomNav onUploadClick={() => setShowUpload((v) => !v)} />
+      <FloatingTabBar activeTab={activeTab} onTabChange={setActiveTab} />
+
+      <AlertDialog open={!!deleteKey} onOpenChange={(o) => !o && setDeleteKey(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Elimina file</AlertDialogTitle>
+            <AlertDialogDescription>
+              Questa azione è irreversibile. Il file verrà eliminato definitivamente dal bucket S3.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annulla</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteKey && deleteMutation.mutate({ key: deleteKey })}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Elimina"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={showNewFolder} onOpenChange={setShowNewFolder}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Nuova cartella</DialogTitle>
+          </DialogHeader>
+          <input
+            type="text"
+            value={newFolderName}
+            onChange={(e) => setNewFolderName(e.target.value)}
+            placeholder="Nome cartella"
+            className="w-full px-3 py-2 border border-border rounded-lg text-sm"
+            onKeyDown={(e) => e.key === "Enter" && handleCreateFolder()}
+          />
+          <DialogFooter>
+            <button
+              onClick={() => setShowNewFolder(false)}
+              className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors"
+            >
+              Annulla
+            </button>
+            <button
+              onClick={handleCreateFolder}
+              disabled={mkdirMutation.isPending}
+              className="px-4 py-2 text-sm bg-foreground text-background rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60"
+            >
+              {mkdirMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                "Crea"
+              )}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

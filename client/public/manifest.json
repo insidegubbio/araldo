@@ -1,0 +1,26 @@
+{
+  "name": "Araldo",
+  "short_name": "Araldo",
+  "description": "Gestione file S3 sicura e veloce",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fafafa",
+  "theme_color": "#111111",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/file-storage/icon-192_3a23d636.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/file-storage/icon-512_d2c6e1ea.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "utilities"],
+  "screenshots": []
+}
