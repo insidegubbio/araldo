@@ -30,14 +30,14 @@ build e deploy: vite, esbuild, vercel come piattaforma di hosting principale.
 
 ## variabili d’ambiente
 
-s3_bucket: nome del bucket s3, obbligatoria.
-s3_region: regione s3, es. us east 1 o eu central 003, obbligatoria.
-s3_endpoint: endpoint custom per provider non aws, es. s3.eu central 003.backblazeb2.com, opzionale.
-s3_access_key: access key id s3, obbligatoria.
-s3_secret_key: secret access key s3, obbligatoria.
-worker_url: url del worker cloudflare per il tracking dei file, opzionale.
-database_url: stringa di connessione mysql o tidb, obbligatoria.
-jwt_secret: segreto per la firma dei cookie di sessione, obbligatoria.
+- s3_bucket: nome del bucket s3, obbligatoria.
+- s3_region: regione s3, es. us east 1 o eu central 003, obbligatoria.
+- s3_endpoint: endpoint custom per provider non aws, es. s3.eu central 003.backblazeb2.com, opzionale.
+- s3_access_key: access key id s3, obbligatoria.
+- s3_secret_key: secret access key s3, obbligatoria.
+- worker_url: url del worker cloudflare per il tracking dei file, opzionale.
+- database_url: stringa di connessione mysql o tidb, obbligatoria.
+- jwt_secret: segreto per la firma dei cookie di sessione, obbligatoria.
 
 ## sviluppo locale
 
