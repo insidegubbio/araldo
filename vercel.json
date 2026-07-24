@@ -1,10 +1,11 @@
 {
   "buildCommand": "pnpm run build",
-  "outputDirectory": "dist",
+  "outputDirectory": "dist/public",
   "installCommand": "pnpm install",
   "framework": null,
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/api/(.*)", "destination": "/api/index" },
+    { "source": "/file-storage/(.*)", "destination": "/api/index" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [
