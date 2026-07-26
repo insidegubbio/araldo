@@ -10,6 +10,10 @@ export default function Login() {
   const [, navigate] = useLocation();
   const { theme, toggleTheme } = useTheme();
 
+  const isNotAuthorized =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("error") === "not_authorized";
+
   useEffect(() => {
     if (!loading && isAuthenticated) navigate("/");
   }, [isAuthenticated, loading, navigate]);
@@ -41,6 +45,12 @@ export default function Login() {
               Gestisci i tuoi file S3 in modo sicuro
             </p>
           </div>
+
+          {isNotAuthorized ? (
+            <p className="text-center text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg py-2 px-3 mb-4">
+              Il tuo account GitHub non è autorizzato ad accedere.
+            </p>
+          ) : null}
 
           <button
             onClick={() => startLogin()}
