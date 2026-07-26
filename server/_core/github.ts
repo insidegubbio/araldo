@@ -57,7 +57,7 @@ type GithubEmail = {
 
 export async function getGithubUser(
   accessToken: string
-): Promise<{ openId: string; name: string; email: string | null }> {
+): Promise<{ openId: string; name: string; email: string | null; login: string }> {
   const userResponse = await fetch(GITHUB_USER_URL, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -90,5 +90,6 @@ export async function getGithubUser(
     openId: `github:${user.id}`,
     name: user.name || user.login,
     email,
+    login: user.login,
   };
 }
