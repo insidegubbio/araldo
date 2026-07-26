@@ -39,6 +39,8 @@ import {
   Trash2,
   Upload,
   FolderPlus,
+  Folder,
+  Pencil,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
@@ -55,7 +57,7 @@ function formatBytes(bytes: number): string {
 }
 
 export default function Dashboard() {
-  const { user, isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading } = useAuth();
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -65,6 +67,9 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<TabId>("files");
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [renameTarget, setRenameTarget] = useState<{ key: string; filename: string } | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [currentPrefix, setCurrentPrefix] = useState("");
   const pageSize = 20;
 
   useEffect(() => {
@@ -79,9 +84,13 @@ export default function Dashboard() {
     return () => clearTimeout(t);
   }, [search]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [currentPrefix]);
+
   const utils = trpc.useUtils();
   const { data, isLoading, isFetching } = trpc.files.list.useQuery(
-    { search: debouncedSearch, page, pageSize },
+    { search: debouncedSearch, page, pageSize, prefix: currentPrefix },
     { enabled: isAuthenticated, refetchOnWindowFocus: false }
   );
   const getDownloadUrl = trpc.files.getDownloadUrl.useMutation();
@@ -102,6 +111,15 @@ export default function Dashboard() {
     },
     onError: (e) => toast.error(e.message),
   });
+  const renameMutation = trpc.files.rename.useMutation({
+    onSuccess: () => {
+      toast.success("File rinominato");
+      utils.files.list.invalidate();
+      setRenameTarget(null);
+      setRenameValue("");
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   const handleDownload = async (key: string, filename: string) => {
     try {
@@ -115,16 +133,44 @@ export default function Dashboard() {
     }
   };
 
+  const handleRename = () => {
+    if (!renameTarget) return;
+    if (!renameValue.trim()) {
+      toast.error("Nome file non valido");
+      return;
+    }
+    if (renameValue.trim() === renameTarget.filename) {
+      setRenameTarget(null);
+      return;
+    }
+    renameMutation.mutate({ oldKey: renameTarget.key, newName: renameValue.trim() });
+  };
+
   const handleCreateFolder = () => {
     if (!newFolderName.trim()) {
       toast.error("Nome cartella non valido");
       return;
     }
-    mkdirMutation.mutate({ folderName: newFolderName });
+    mkdirMutation.mutate({ folderName: newFolderName, prefix: currentPrefix });
   };
 
+  const openFolder = (folderPrefix: string) => {
+    setSearch("");
+    setDebouncedSearch("");
+    setCurrentPrefix(folderPrefix);
+  };
+
+  // Breadcrumb segments derived from the current prefix, e.g.
+  // "foto/vacanze/" -> [{ name: "foto", prefix: "foto/" }, { name: "vacanze", prefix: "foto/vacanze/" }]
+  const breadcrumbs = currentPrefix
+    .split("/")
+    .filter(Boolean)
+    .map((name, i, arr) => ({
+      name,
+      prefix: arr.slice(0, i + 1).join("/") + "/",
+    }));
+
   const totalPages = data ? Math.ceil(data.total / pageSize) : 0;
-  const isAdmin = user?.role === "admin";
 
   if (loading) {
     return (
@@ -143,7 +189,7 @@ export default function Dashboard() {
           <div>
             <h1 className="font-serif text-3xl mb-1">File</h1>
             <p className="text-muted-foreground text-sm">
-              {data ? `${data.total} file nel bucket` : "Caricamento…"}
+              {data ? `${data.total} file${currentPrefix ? " in questa cartella" : " nel bucket"}` : "Caricamento…"}
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -169,6 +215,7 @@ export default function Dashboard() {
             {showUpload && (
               <div className="mb-8 animate-fade-in">
                 <UploadDropzone
+                  folder={currentPrefix.replace(/\/$/, "")}
                   onUploaded={() => {
                     utils.files.list.invalidate();
                     setShowUpload(false);
@@ -176,6 +223,30 @@ export default function Dashboard() {
                 />
               </div>
             )}
+
+            <div className="flex items-center gap-1 mb-4 text-sm overflow-x-auto whitespace-nowrap">
+              <button
+                onClick={() => openFolder("")}
+                className={`px-2 py-1 rounded hover:bg-muted transition-colors ${
+                  currentPrefix === "" ? "font-medium text-foreground" : "text-muted-foreground"
+                }`}
+              >
+                Home
+              </button>
+              {breadcrumbs.map((crumb) => (
+                <span key={crumb.prefix} className="flex items-center gap-1">
+                  <span className="text-muted-foreground">/</span>
+                  <button
+                    onClick={() => openFolder(crumb.prefix)}
+                    className={`px-2 py-1 rounded hover:bg-muted transition-colors ${
+                      crumb.prefix === currentPrefix ? "font-medium text-foreground" : "text-muted-foreground"
+                    }`}
+                  >
+                    {crumb.name}
+                  </button>
+                </span>
+              ))}
+            </div>
 
             <div className="relative mb-4">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -201,15 +272,28 @@ export default function Dashboard() {
                     </div>
                   ))}
                 </div>
-              ) : !data?.items.length ? (
+              ) : !data?.items.length && !data?.folders.length ? (
                 <div className="py-16 text-center">
                   <p className="text-muted-foreground text-sm">
-                    {search ? "Nessun file trovato" : "Nessun file nel bucket"}
+                    {search ? "Nessun file trovato" : "Cartella vuota"}
                   </p>
                 </div>
               ) : (
                 <div className="divide-y divide-border">
-                  {data.items.map((file) => (
+                  {data?.folders.map((folder) => (
+                    <button
+                      key={folder.prefix}
+                      onClick={() => openFolder(folder.prefix)}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors text-left"
+                    >
+                      <Folder className="w-5 h-5 text-muted-foreground shrink-0 fill-muted-foreground/20" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{folder.name}</p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                    </button>
+                  ))}
+                  {data?.items.map((file) => (
                     <div
                       key={file.s3Key}
                       className={`flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors group ${
@@ -251,15 +335,23 @@ export default function Dashboard() {
                         >
                           <Download className="w-4 h-4" />
                         </button>
-                        {isAdmin && (
-                          <button
-                            onClick={() => setDeleteKey(file.s3Key)}
-                            className="p-1.5 rounded hover:bg-muted transition-colors text-destructive"
-                            title="Elimina"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
+                        <button
+                          onClick={() => {
+                            setRenameTarget({ key: file.s3Key, filename: file.filename });
+                            setRenameValue(file.filename);
+                          }}
+                          className="p-1.5 rounded hover:bg-muted transition-colors"
+                          title="Rinomina"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setDeleteKey(file.s3Key)}
+                          className="p-1.5 rounded hover:bg-muted transition-colors text-destructive"
+                          title="Elimina"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -352,6 +444,42 @@ export default function Dashboard() {
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 "Crea"
+              )}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!renameTarget} onOpenChange={(o) => !o && setRenameTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rinomina file</DialogTitle>
+          </DialogHeader>
+          <input
+            type="text"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            placeholder="Nuovo nome file"
+            className="w-full px-3 py-2 border border-border rounded-lg text-sm"
+            onKeyDown={(e) => e.key === "Enter" && handleRename()}
+            autoFocus
+          />
+          <DialogFooter>
+            <button
+              onClick={() => setRenameTarget(null)}
+              className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors"
+            >
+              Annulla
+            </button>
+            <button
+              onClick={handleRename}
+              disabled={renameMutation.isPending}
+              className="px-4 py-2 text-sm bg-foreground text-background rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60"
+            >
+              {renameMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                "Rinomina"
               )}
             </button>
           </DialogFooter>
