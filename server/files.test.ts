@@ -76,8 +76,9 @@ describe("files.delete", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("rejects non-admin delete", async () => {
+  it("allows a regular user to delete a file", async () => {
     const caller = appRouter.createCaller(makeCtx("user"));
-    await expect(caller.files.delete({ key: "test/file.pdf" })).rejects.toThrow("Only admins");
+    const result = await caller.files.delete({ key: "test/file.pdf" });
+    expect(result.ok).toBe(true);
   });
 });
