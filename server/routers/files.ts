@@ -60,7 +60,7 @@ export const filesRouter = router({
           uploadedAt: f.lastModified,
           lastAccessed: null,
           accessCount: 0,
-          workerTracked: 0,
+          workerTracked: false,
           lastModified: f.lastModified,
           etag: f.etag,
           existsInS3: true,

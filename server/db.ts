@@ -1,5 +1,5 @@
 import { desc, eq, like, or, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { drizzle } from "drizzle-orm/neon-http";
 import { filesMetadata, InsertFileMetadata, InsertUser, users } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
@@ -45,7 +45,8 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   }
   if (!values.lastSignedIn) values.lastSignedIn = new Date();
   if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = new Date();
-  await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
+  updateSet.updatedAt = new Date();
+  await db.insert(users).values(values).onConflictDoUpdate({ target: users.openId, set: updateSet });
 }
 
 export async function getUserByOpenId(openId: string) {
@@ -61,7 +62,8 @@ export async function upsertFileMetadata(data: InsertFileMetadata) {
   await db
     .insert(filesMetadata)
     .values(data)
-    .onDuplicateKeyUpdate({
+    .onConflictDoUpdate({
+      target: filesMetadata.s3Key,
       set: {
         filename: data.filename,
         size: data.size,
@@ -120,5 +122,5 @@ export async function incrementAccessCount(s3Key: string) {
 export async function markWorkerTracked(s3Key: string) {
   const db = await getDb();
   if (!db) return;
-  await db.update(filesMetadata).set({ workerTracked: 1 }).where(eq(filesMetadata.s3Key, s3Key));
+  await db.update(filesMetadata).set({ workerTracked: true }).where(eq(filesMetadata.s3Key, s3Key));
 }
