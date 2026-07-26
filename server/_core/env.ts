@@ -15,4 +15,8 @@ export const ENV = {
   workerUrl: process.env.WORKER_URL ?? "",
   githubClientId: process.env.GITHUB_CLIENT_ID ?? "",
   githubClientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
+  allowedGithubLogins: (process.env.ALLOWED_GITHUB_LOGINS ?? "")
+    .split(",")
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean),
 };
