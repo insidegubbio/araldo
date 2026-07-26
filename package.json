@@ -2,7 +2,7 @@
   "name": "araldo",
   "version": "1.0.5",
   "type": "module",
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "scripts": {
     "dev": "NODE_ENV=development tsx watch server/_core/index.ts",
     "build": "vite build && esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist && mkdir -p api && esbuild server/_core/vercelHandler.ts --platform=node --packages=external --bundle --format=esm --outfile=api/index.js",
