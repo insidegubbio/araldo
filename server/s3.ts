@@ -17,6 +17,9 @@ export function getClient(): S3Client {
       accessKeyId: ENV.s3AccessKey,
       secretAccessKey: ENV.s3SecretKey,
     },
+    // newer AWS SDK v3 versions default to adding a flexible checksum to requests
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED",
   };
   if (ENV.s3Endpoint) {
     config.endpoint = ENV.s3Endpoint.startsWith("https://")
@@ -47,16 +50,13 @@ export async function listFiles(prefix = "", maxKeys = 1000, continuationToken?:
     Prefix: prefix,
     MaxKeys: maxKeys,
     ContinuationToken: continuationToken,
-    // Group keys that share the same "folder" segment under CommonPrefixes
+    // Group keys that share the same "folder" segment under commonprefixes
     // instead of flattening the whole subtree into Contents.
     Delimiter: "/",
   });
   const res = await client.send(cmd);
   const items: S3FileItem[] = (res.Contents ?? []).map((obj) => {
     const rawName = (obj.Key ?? "").split("/").pop() ?? obj.Key ?? "";
-    // Strip the short random collision-avoidance prefix ("aB3xK9pL-") that
-    // getUploadUrl adds to keys, so the fallback display name (used when a
-    // file has no DB metadata row) still reads as the real filename.
     const displayName = rawName.replace(/^[A-Za-z0-9_-]{6,14}-/, "");
     return {
       key: obj.Key ?? "",
@@ -82,9 +82,7 @@ export async function listFiles(prefix = "", maxKeys = 1000, continuationToken?:
 }
 
 /**
- * Lists every object key under a prefix, recursing through all pages and
- * ignoring the "/" delimiter — used for folder-wide operations (delete,
- * rename) where we need every file inside, not just the immediate children.
+ * Lists every object key under a prefix
  */
 export async function listAllKeysUnderPrefix(prefix: string): Promise<string[]> {
   const client = getClient();
@@ -118,10 +116,8 @@ export async function getUploadPresignedUrl(key: string, contentType: string, ex
 }
 
 /**
- * Configures CORS on the bucket so browsers can PUT directly to presigned
- * upload URLs and GET/HEAD objects from the app's origin(s), without going
- * through the server. This must be run once (or whenever allowed origins
- * change) — it's not something the app needs to do on every request.
+ * Configures CORS on the bucket so browsers can put directly to presigned
+ * upload URLs and get/head objects from the app's origins
  */
 export async function configureBucketCors(allowedOrigins: string[]) {
   const client = getClient();
