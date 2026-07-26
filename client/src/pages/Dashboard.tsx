@@ -272,7 +272,7 @@ export default function Dashboard() {
                     </div>
                   ))}
                 </div>
-              ) : !data?.items.length && !data?.folders.length ? (
+              ) : !data?.items?.length && !data?.folders?.length ? (
                 <div className="py-16 text-center">
                   <p className="text-muted-foreground text-sm">
                     {search ? "Nessun file trovato" : "Cartella vuota"}
@@ -280,7 +280,7 @@ export default function Dashboard() {
                 </div>
               ) : (
                 <div className="divide-y divide-border">
-                  {data?.folders.map((folder) => (
+                  {data?.folders?.map((folder) => (
                     <button
                       key={folder.prefix}
                       onClick={() => openFolder(folder.prefix)}
@@ -293,7 +293,7 @@ export default function Dashboard() {
                       <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
                     </button>
                   ))}
-                  {data?.items.map((file) => (
+                  {data?.items?.map((file) => (
                     <div
                       key={file.s3Key}
                       className={`flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors group ${
