@@ -47,17 +47,25 @@ export async function listFiles(prefix = "", maxKeys = 1000, continuationToken?:
     Prefix: prefix,
     MaxKeys: maxKeys,
     ContinuationToken: continuationToken,
-    //group keys that share the same "folder" segment under commonprefixes
+    // Group keys that share the same "folder" segment under CommonPrefixes
+    // instead of flattening the whole subtree into Contents.
     Delimiter: "/",
   });
   const res = await client.send(cmd);
-  const items: S3FileItem[] = (res.Contents ?? []).map((obj) => ({
-    key: obj.Key ?? "",
-    filename: (obj.Key ?? "").split("/").pop() ?? obj.Key ?? "",
-    size: obj.Size ?? 0,
-    lastModified: obj.LastModified ?? new Date(),
-    etag: obj.ETag?.replace(/"/g, ""),
-  }));
+  const items: S3FileItem[] = (res.Contents ?? []).map((obj) => {
+    const rawName = (obj.Key ?? "").split("/").pop() ?? obj.Key ?? "";
+    // Strip the short random collision-avoidance prefix ("aB3xK9pL-") that
+    // getUploadUrl adds to keys, so the fallback display name (used when a
+    // file has no DB metadata row) still reads as the real filename.
+    const displayName = rawName.replace(/^[A-Za-z0-9_-]{6,14}-/, "");
+    return {
+      key: obj.Key ?? "",
+      filename: displayName || rawName,
+      size: obj.Size ?? 0,
+      lastModified: obj.LastModified ?? new Date(),
+      etag: obj.ETag?.replace(/"/g, ""),
+    };
+  });
   const folders: S3FolderItem[] = (res.CommonPrefixes ?? [])
     .map((cp) => cp.Prefix ?? "")
     .filter(Boolean)
@@ -73,6 +81,32 @@ export async function listFiles(prefix = "", maxKeys = 1000, continuationToken?:
   };
 }
 
+/**
+ * Lists every object key under a prefix, recursing through all pages and
+ * ignoring the "/" delimiter — used for folder-wide operations (delete,
+ * rename) where we need every file inside, not just the immediate children.
+ */
+export async function listAllKeysUnderPrefix(prefix: string): Promise<string[]> {
+  const client = getClient();
+  const keys: string[] = [];
+  let continuationToken: string | undefined;
+  do {
+    const res = await client.send(
+      new ListObjectsV2Command({
+        Bucket: ENV.s3Bucket,
+        Prefix: prefix,
+        MaxKeys: 1000,
+        ContinuationToken: continuationToken,
+      })
+    );
+    (res.Contents ?? []).forEach((obj) => {
+      if (obj.Key) keys.push(obj.Key);
+    });
+    continuationToken = res.NextContinuationToken;
+  } while (continuationToken);
+  return keys;
+}
+
 export async function getUploadPresignedUrl(key: string, contentType: string, expiresIn = 3600) {
   const client = getClient();
   const cmd = new PutObjectCommand({
@@ -84,8 +118,10 @@ export async function getUploadPresignedUrl(key: string, contentType: string, ex
 }
 
 /**
- * configures CORS on the bucket so browsers can put directly to presigned
- * upload URLs and get/head objects from the app's origins
+ * Configures CORS on the bucket so browsers can PUT directly to presigned
+ * upload URLs and GET/HEAD objects from the app's origin(s), without going
+ * through the server. This must be run once (or whenever allowed origins
+ * change) — it's not something the app needs to do on every request.
  */
 export async function configureBucketCors(allowedOrigins: string[]) {
   const client = getClient();
