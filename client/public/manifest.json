@@ -4,8 +4,8 @@
   "description": "Gestione file S3 sicura e veloce",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#fafafa",
-  "theme_color": "#111111",
+  "background_color": "#DFE5D7",
+  "theme_color": "#2C3229",
   "orientation": "portrait-primary",
   "icons": [
     {

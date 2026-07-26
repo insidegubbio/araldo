@@ -3,6 +3,7 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
+  PutBucketCorsCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -34,6 +35,11 @@ export interface S3FileItem {
   etag?: string;
 }
 
+export interface S3FolderItem {
+  prefix: string;
+  name: string;
+}
+
 export async function listFiles(prefix = "", maxKeys = 1000, continuationToken?: string) {
   const client = getClient();
   const cmd = new ListObjectsV2Command({
@@ -41,6 +47,8 @@ export async function listFiles(prefix = "", maxKeys = 1000, continuationToken?:
     Prefix: prefix,
     MaxKeys: maxKeys,
     ContinuationToken: continuationToken,
+    //group keys that share the same "folder" segment under commonprefixes
+    Delimiter: "/",
   });
   const res = await client.send(cmd);
   const items: S3FileItem[] = (res.Contents ?? []).map((obj) => ({
@@ -50,8 +58,16 @@ export async function listFiles(prefix = "", maxKeys = 1000, continuationToken?:
     lastModified: obj.LastModified ?? new Date(),
     etag: obj.ETag?.replace(/"/g, ""),
   }));
+  const folders: S3FolderItem[] = (res.CommonPrefixes ?? [])
+    .map((cp) => cp.Prefix ?? "")
+    .filter(Boolean)
+    .map((p) => ({
+      prefix: p,
+      name: p.replace(prefix, "").replace(/\/$/, ""),
+    }));
   return {
     items,
+    folders,
     nextToken: res.NextContinuationToken,
     isTruncated: res.IsTruncated ?? false,
   };
@@ -65,6 +81,31 @@ export async function getUploadPresignedUrl(key: string, contentType: string, ex
     ContentType: contentType,
   });
   return getSignedUrl(client, cmd, { expiresIn });
+}
+
+/**
+ * configures CORS on the bucket so browsers can put directly to presigned
+ * upload URLs and get/head objects from the app's origins
+ */
+export async function configureBucketCors(allowedOrigins: string[]) {
+  const client = getClient();
+  const origins = allowedOrigins.length > 0 ? allowedOrigins : ["*"];
+  await client.send(
+    new PutBucketCorsCommand({
+      Bucket: ENV.s3Bucket,
+      CORSConfiguration: {
+        CORSRules: [
+          {
+            AllowedOrigins: origins,
+            AllowedMethods: ["GET", "PUT", "HEAD"],
+            AllowedHeaders: ["*"],
+            ExposeHeaders: ["ETag"],
+            MaxAgeSeconds: 3000,
+          },
+        ],
+      },
+    })
+  );
 }
 
 export async function getDownloadPresignedUrl(key: string, expiresIn = 3600) {

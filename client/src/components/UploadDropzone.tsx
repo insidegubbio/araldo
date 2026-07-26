@@ -6,6 +6,7 @@ import { Progress } from "@/components/ui/progress";
 
 interface UploadDropzoneProps {
   onUploaded?: () => void;
+  folder?: string;
 }
 
 interface UploadingFile {
@@ -15,7 +16,7 @@ interface UploadingFile {
   status: "pending" | "uploading" | "done" | "error";
 }
 
-export function UploadDropzone({ onUploaded }: UploadDropzoneProps) {
+export function UploadDropzone({ onUploaded, folder = "" }: UploadDropzoneProps) {
   const [dragging, setDragging] = useState(false);
   const [uploads, setUploads] = useState<UploadingFile[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -32,6 +33,7 @@ export function UploadDropzone({ onUploaded }: UploadDropzoneProps) {
       const { uploadUrl, key } = await getUploadUrl.mutateAsync({
         filename: file.name,
         contentType: file.type || "application/octet-stream",
+        folder,
       });
       updateUpload(id, { status: "uploading" });
       await new Promise<void>((resolve, reject) => {

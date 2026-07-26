@@ -1,4 +1,4 @@
-import { desc, eq, like, or, sql } from "drizzle-orm";
+import { and, desc, eq, like, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 import { filesMetadata, InsertFileMetadata, InsertUser, users } from "../drizzle/schema";
 import { ENV } from "./_core/env";
@@ -81,27 +81,38 @@ export async function getFileMetadata(s3Key: string) {
   return result[0];
 }
 
-export async function listFilesMetadata(search = "", page = 1, pageSize = 50) {
+export async function listFilesMetadata(prefix = "", search = "", page = 1, pageSize = 50) {
   const db = await getDb();
   if (!db) return { items: [], total: 0 };
+
+  //a search query looks across the whole bucket, not just the current folder
+  const isSearching = search.trim().length > 0;
+  const conditions = [];
+  if (!isSearching && prefix) conditions.push(like(filesMetadata.s3Key, `${prefix}%`));
+  if (isSearching) {
+    conditions.push(or(like(filesMetadata.filename, `%${search}%`), like(filesMetadata.s3Key, `%${search}%`)));
+  }
+  const whereClause = conditions.length ? and(...conditions) : undefined;
+
+  // fetch broadly and filter/paginate in js
+  const rows = await db
+    .select()
+    .from(filesMetadata)
+    .where(whereClause)
+    .orderBy(desc(filesMetadata.uploadedAt))
+    .limit(1000);
+
+  const filtered = rows.filter((row) => {
+    if (row.filename === ".gitkeep") return false; // folder placeholder, not a real file
+    if (isSearching) return true; // search matches anywhere in the bucket
+    const rest = row.s3Key.slice(prefix.length);
+    return !rest.includes("/"); // only direct children of the current folder
+  });
+
+  const total = filtered.length;
   const offset = (page - 1) * pageSize;
-  const whereClause = search
-    ? or(like(filesMetadata.filename, `%${search}%`), like(filesMetadata.s3Key, `%${search}%`))
-    : undefined;
-  const [items, countResult] = await Promise.all([
-    db
-      .select()
-      .from(filesMetadata)
-      .where(whereClause)
-      .orderBy(desc(filesMetadata.uploadedAt))
-      .limit(pageSize)
-      .offset(offset),
-    db
-      .select({ count: sql<number>`count(*)` })
-      .from(filesMetadata)
-      .where(whereClause),
-  ]);
-  return { items, total: Number(countResult[0]?.count ?? 0) };
+  const items = filtered.slice(offset, offset + pageSize);
+  return { items, total };
 }
 
 export async function deleteFileMetadata(s3Key: string) {
@@ -123,4 +134,20 @@ export async function markWorkerTracked(s3Key: string) {
   const db = await getDb();
   if (!db) return;
   await db.update(filesMetadata).set({ workerTracked: true }).where(eq(filesMetadata.s3Key, s3Key));
+}
+
+export async function getTopAccessedFiles(limit = 10) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({
+      s3Key: filesMetadata.s3Key,
+      filename: filesMetadata.filename,
+      accessCount: filesMetadata.accessCount,
+      lastAccessed: filesMetadata.lastAccessed,
+    })
+    .from(filesMetadata)
+    .where(sql`${filesMetadata.accessCount} > 0`)
+    .orderBy(desc(filesMetadata.accessCount))
+    .limit(limit);
 }
