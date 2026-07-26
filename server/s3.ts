@@ -35,6 +35,11 @@ export interface S3FileItem {
   etag?: string;
 }
 
+export interface S3FolderItem {
+  prefix: string;
+  name: string;
+}
+
 export async function listFiles(prefix = "", maxKeys = 1000, continuationToken?: string) {
   const client = getClient();
   const cmd = new ListObjectsV2Command({
@@ -42,6 +47,9 @@ export async function listFiles(prefix = "", maxKeys = 1000, continuationToken?:
     Prefix: prefix,
     MaxKeys: maxKeys,
     ContinuationToken: continuationToken,
+    // Group keys that share the same "folder" segment under CommonPrefixes
+    // instead of flattening the whole subtree into Contents.
+    Delimiter: "/",
   });
   const res = await client.send(cmd);
   const items: S3FileItem[] = (res.Contents ?? []).map((obj) => ({
@@ -51,8 +59,16 @@ export async function listFiles(prefix = "", maxKeys = 1000, continuationToken?:
     lastModified: obj.LastModified ?? new Date(),
     etag: obj.ETag?.replace(/"/g, ""),
   }));
+  const folders: S3FolderItem[] = (res.CommonPrefixes ?? [])
+    .map((cp) => cp.Prefix ?? "")
+    .filter(Boolean)
+    .map((p) => ({
+      prefix: p,
+      name: p.replace(prefix, "").replace(/\/$/, ""),
+    }));
   return {
     items,
+    folders,
     nextToken: res.NextContinuationToken,
     isTruncated: res.IsTruncated ?? false,
   };
