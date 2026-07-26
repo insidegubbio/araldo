@@ -3,6 +3,7 @@ import { parse as parseCookieHeader } from "cookie";
 import type { Express, Request, Response } from "express";
 import * as db from "../db";
 import { getSessionCookieOptions } from "./cookies";
+import { ENV } from "./env";
 import { buildGithubAuthorizeUrl, exchangeGithubCode, getGithubUser } from "./github";
 import { sdk } from "./sdk";
 
@@ -52,7 +53,16 @@ export function registerOAuthRoutes(app: Express) {
     try {
       const redirectUri = getRedirectUri(req);
       const accessToken = await exchangeGithubCode(code, redirectUri);
-      const { openId, name, email } = await getGithubUser(accessToken);
+      const { openId, name, email, login } = await getGithubUser(accessToken);
+
+      const isAllowed =
+        ENV.allowedGithubLogins.length === 0 ||
+        ENV.allowedGithubLogins.includes(login.toLowerCase());
+
+      if (!isAllowed) {
+        res.redirect(302, "/login?error=not_authorized");
+        return;
+      }
 
       await db.upsertUser({
         openId,
