@@ -47,8 +47,7 @@ export async function listFiles(prefix = "", maxKeys = 1000, continuationToken?:
     Prefix: prefix,
     MaxKeys: maxKeys,
     ContinuationToken: continuationToken,
-    // Group keys that share the same "folder" segment under CommonPrefixes
-    // instead of flattening the whole subtree into Contents.
+    //group keys that share the same "folder" segment under commonprefixes
     Delimiter: "/",
   });
   const res = await client.send(cmd);
@@ -85,10 +84,8 @@ export async function getUploadPresignedUrl(key: string, contentType: string, ex
 }
 
 /**
- * Configures CORS on the bucket so browsers can PUT directly to presigned
- * upload URLs and GET/HEAD objects from the app's origin(s), without going
- * through the server. This must be run once (or whenever allowed origins
- * change) — it's not something the app needs to do on every request.
+ * configures CORS on the bucket so browsers can put directly to presigned
+ * upload URLs and get/head objects from the app's origins
  */
 export async function configureBucketCors(allowedOrigins: string[]) {
   const client = getClient();
