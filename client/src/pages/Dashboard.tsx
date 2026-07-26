@@ -29,6 +29,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   ChevronLeft,
   ChevronRight,
@@ -41,6 +42,7 @@ import {
   FolderPlus,
   Folder,
   Pencil,
+  X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
@@ -70,6 +72,8 @@ export default function Dashboard() {
   const [renameTarget, setRenameTarget] = useState<{ key: string; filename: string } | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [currentPrefix, setCurrentPrefix] = useState("");
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
   const pageSize = 20;
 
   useEffect(() => {
@@ -87,6 +91,10 @@ export default function Dashboard() {
   useEffect(() => {
     setPage(1);
   }, [currentPrefix]);
+
+  useEffect(() => {
+    setSelectedKeys(new Set());
+  }, [currentPrefix, debouncedSearch, page]);
 
   const utils = trpc.useUtils();
   const { data, isLoading, isFetching } = trpc.files.list.useQuery(
@@ -120,6 +128,49 @@ export default function Dashboard() {
     },
     onError: (e) => toast.error(e.message),
   });
+  const deleteManyMutation = trpc.files.deleteMany.useMutation({
+    onSuccess: (result) => {
+      if (result.failed.length > 0) {
+        toast.warning(`${result.deleted} eliminati, ${result.failed.length} non riusciti`);
+      } else {
+        toast.success(`${result.deleted} file eliminati`);
+      }
+      utils.files.list.invalidate();
+      setSelectedKeys(new Set());
+      setBulkDeleteConfirm(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const toggleSelected = (key: string) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const currentFileKeys = data?.items?.map((f) => f.s3Key) ?? [];
+  const allSelected = currentFileKeys.length > 0 && currentFileKeys.every((k) => selectedKeys.has(k));
+
+  const toggleSelectAll = () => {
+    setSelectedKeys((prev) => {
+      if (allSelected) return new Set();
+      const next = new Set(prev);
+      currentFileKeys.forEach((k) => next.add(k));
+      return next;
+    });
+  };
+
+  const handleBulkDownload = async () => {
+    const files = data?.items?.filter((f) => selectedKeys.has(f.s3Key)) ?? [];
+    for (const file of files) {
+      await handleDownload(file.s3Key, file.filename);
+      // piccola pausa per evitare che il browser blocchi download multipli simultanei
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  };
 
   const handleDownload = async (key: string, filename: string) => {
     try {
@@ -258,7 +309,48 @@ export default function Dashboard() {
               />
             </div>
 
+            {selectedKeys.size > 0 && (
+              <div className="flex items-center justify-between gap-2 mb-3 px-4 py-2 bg-muted rounded-lg">
+                <span className="text-sm font-medium">
+                  {selectedKeys.size} selezionat{selectedKeys.size === 1 ? "o" : "i"}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleBulkDownload}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md border border-border hover:bg-background transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Scarica
+                  </button>
+                  <button
+                    onClick={() => setBulkDeleteConfirm(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Elimina
+                  </button>
+                  <button
+                    onClick={() => setSelectedKeys(new Set())}
+                    className="flex items-center gap-1 px-2 py-1.5 text-sm rounded-md hover:bg-background transition-colors text-muted-foreground"
+                    title="Deseleziona tutto"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="border border-border rounded-xl overflow-hidden">
+              {!isLoading && currentFileKeys.length > 0 && (
+                <div className="flex items-center gap-3 px-4 py-2 border-b border-border bg-muted/40">
+                  <Checkbox
+                    checked={allSelected}
+                    onCheckedChange={toggleSelectAll}
+                    aria-label="Seleziona tutti i file"
+                  />
+                  <span className="text-xs text-muted-foreground">Seleziona tutto</span>
+                </div>
+              )}
               {isLoading ? (
                 <div className="divide-y divide-border">
                   {Array.from({ length: 5 }).map((_, i) => (
@@ -298,8 +390,13 @@ export default function Dashboard() {
                       key={file.s3Key}
                       className={`flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors group ${
                         isFetching ? "opacity-70" : ""
-                      }`}
+                      } ${selectedKeys.has(file.s3Key) ? "bg-muted/50" : ""}`}
                     >
+                      <Checkbox
+                        checked={selectedKeys.has(file.s3Key)}
+                        onCheckedChange={() => toggleSelected(file.s3Key)}
+                        aria-label={`Seleziona ${file.filename}`}
+                      />
                       <FileIcon
                         mimeType={file.mimeType}
                         filename={file.filename}
@@ -410,6 +507,26 @@ export default function Dashboard() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {deleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Elimina"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkDeleteConfirm} onOpenChange={setBulkDeleteConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Elimina {selectedKeys.size} file</AlertDialogTitle>
+            <AlertDialogDescription>
+              Questa azione è irreversibile. I file selezionati verranno eliminati definitivamente dal bucket S3.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annulla</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteManyMutation.mutate({ keys: Array.from(selectedKeys) })}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteManyMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Elimina"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
