@@ -3,6 +3,7 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
+  PutBucketCorsCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -65,6 +66,33 @@ export async function getUploadPresignedUrl(key: string, contentType: string, ex
     ContentType: contentType,
   });
   return getSignedUrl(client, cmd, { expiresIn });
+}
+
+/**
+ * Configures CORS on the bucket so browsers can PUT directly to presigned
+ * upload URLs and GET/HEAD objects from the app's origin(s), without going
+ * through the server. This must be run once (or whenever allowed origins
+ * change) — it's not something the app needs to do on every request.
+ */
+export async function configureBucketCors(allowedOrigins: string[]) {
+  const client = getClient();
+  const origins = allowedOrigins.length > 0 ? allowedOrigins : ["*"];
+  await client.send(
+    new PutBucketCorsCommand({
+      Bucket: ENV.s3Bucket,
+      CORSConfiguration: {
+        CORSRules: [
+          {
+            AllowedOrigins: origins,
+            AllowedMethods: ["GET", "PUT", "HEAD"],
+            AllowedHeaders: ["*"],
+            ExposeHeaders: ["ETag"],
+            MaxAgeSeconds: 3000,
+          },
+        ],
+      },
+    })
+  );
 }
 
 export async function getDownloadPresignedUrl(key: string, expiresIn = 3600) {
