@@ -12,6 +12,13 @@ export function SettingsView() {
   const { user } = useAuth();
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const { data: settings, isLoading } = trpc.files.settings.useQuery();
+  const configureCors = trpc.files.configureCors.useMutation({
+    onSuccess: (result) => {
+      const list = result.origins.join(", ");
+      toast.success(`CORS configurato per: ${list}`);
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   const copyToClipboard = (text: string, field: string) => {
     navigator.clipboard.writeText(text);
@@ -67,6 +74,28 @@ export function SettingsView() {
               </Button>
             </div>
           </div>
+
+          {user?.role === "admin" && (
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">CORS del bucket</label>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => configureCors.mutate()}
+                disabled={configureCors.isPending}
+                className="w-full sm:w-auto"
+              >
+                {configureCors.isPending ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  "Configura CORS ora"
+                )}
+              </Button>
+              <p className="text-xs text-muted-foreground mt-2">
+                Applica CORS_ALLOWED_ORIGINS al bucket, così il browser può caricare i file direttamente su S3.
+              </p>
+            </div>
+          )}
         </div>
       </Card>
 
