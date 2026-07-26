@@ -5,7 +5,7 @@
   "framework": null,
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api" },
-    { "source": "/file-storage/(.*)", "destination": "/api/index" },
+    { "source": "/file-storage/(.*)", "destination": "/api" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [
