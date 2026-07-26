@@ -5,7 +5,7 @@ import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { TRPCError } from "@trpc/server";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import { protectedProcedure, publicProcedure, adminProcedure, router } from "../_core/trpc";
+import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import {
   deleteFileMetadata,
   getFileMetadata,
@@ -194,7 +194,7 @@ export const filesRouter = router({
     return { enabled: Boolean(ENV.workerUrl), url: ENV.workerUrl ? "configured" : null };
   }),
 
-  configureCors: adminProcedure.mutation(async () => {
+  configureCors: protectedProcedure.mutation(async () => {
     if (!ENV.s3Bucket) {
       throw new TRPCError({ code: "PRECONDITION_FAILED", message: "S3_BUCKET non è configurato" });
     }
