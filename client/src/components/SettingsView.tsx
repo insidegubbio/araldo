@@ -95,7 +95,7 @@ export function SettingsView() {
       <Card className="p-6 bg-muted/50">
         <h3 className="font-serif text-lg mb-2">Informazioni</h3>
         <p className="text-xs text-muted-foreground">
-          Araldo v1.0 • Design Strimpello • Supporto PWA
+          Araldo v1.0 • Supporto PWA
         </p>
       </Card>
     </div>
