@@ -13,6 +13,10 @@ export const ENV = {
   s3AccessKey: process.env.S3_ACCESS_KEY ?? "",
   s3SecretKey: process.env.S3_SECRET_KEY ?? "",
   workerUrl: process.env.WORKER_URL ?? "",
+  corsAllowedOrigins: (process.env.CORS_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean),
   githubClientId: process.env.GITHUB_CLIENT_ID ?? "",
   githubClientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
   allowedGithubLogins: (process.env.ALLOWED_GITHUB_LOGINS ?? "")
