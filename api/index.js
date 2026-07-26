@@ -15,32 +15,33 @@ import { parse as parseCookieHeader2 } from "cookie";
 
 // server/db.ts
 import { desc, eq, like, or, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { drizzle } from "drizzle-orm/neon-http";
 
 // drizzle/schema.ts
-import { bigint, int, mysqlEnum, mysqlTable, text, timestamp, tinyint, varchar } from "drizzle-orm/mysql-core";
-var users = mysqlTable("users", {
-  id: int("id").autoincrement().primaryKey(),
+import { bigint, integer, pgEnum, pgTable, serial, text, timestamp, varchar, boolean } from "drizzle-orm/pg-core";
+var roleEnum = pgEnum("role", ["user", "admin"]);
+var users = pgTable("users", {
+  id: serial("id").primaryKey(),
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
+  role: roleEnum("role").default("user").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull()
 });
-var filesMetadata = mysqlTable("files_metadata", {
-  id: int("id").autoincrement().primaryKey(),
+var filesMetadata = pgTable("files_metadata", {
+  id: serial("id").primaryKey(),
   s3Key: varchar("s3_key", { length: 1024 }).notNull().unique(),
   filename: varchar("filename", { length: 512 }).notNull(),
   size: bigint("size", { mode: "number" }).notNull().default(0),
   mimeType: varchar("mime_type", { length: 256 }),
-  uploadedBy: int("uploaded_by"),
+  uploadedBy: integer("uploaded_by"),
   uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
   lastAccessed: timestamp("last_accessed"),
-  accessCount: int("access_count").notNull().default(0),
-  workerTracked: tinyint("worker_tracked").notNull().default(0)
+  accessCount: integer("access_count").notNull().default(0),
+  workerTracked: boolean("worker_tracked").notNull().default(false)
 });
 
 // server/_core/env.ts
@@ -104,7 +105,8 @@ async function upsertUser(user) {
   }
   if (!values.lastSignedIn) values.lastSignedIn = /* @__PURE__ */ new Date();
   if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = /* @__PURE__ */ new Date();
-  await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
+  updateSet.updatedAt = /* @__PURE__ */ new Date();
+  await db.insert(users).values(values).onConflictDoUpdate({ target: users.openId, set: updateSet });
 }
 async function getUserByOpenId(openId) {
   const db = await getDb();
@@ -115,7 +117,8 @@ async function getUserByOpenId(openId) {
 async function upsertFileMetadata(data) {
   const db = await getDb();
   if (!db) return;
-  await db.insert(filesMetadata).values(data).onDuplicateKeyUpdate({
+  await db.insert(filesMetadata).values(data).onConflictDoUpdate({
+    target: filesMetadata.s3Key,
     set: {
       filename: data.filename,
       size: data.size,
@@ -397,7 +400,14 @@ function registerOAuthRoutes(app2) {
       res.redirect(302, "/");
     } catch (error) {
       console.error("[OAuth] GitHub callback failed", error);
-      res.status(500).json({ error: "OAuth callback failed" });
+      res.status(500).json({
+        error: "OAuth callback failed",
+        debug: error?.message,
+        cause: error?.cause?.message ?? error?.cause,
+        code: error?.code ?? error?.cause?.code,
+        errno: error?.errno ?? error?.cause?.errno,
+        sqlMessage: error?.sqlMessage ?? error?.cause?.sqlMessage
+      });
     }
   });
 }
@@ -745,7 +755,7 @@ var filesRouter = router({
       uploadedAt: f.lastModified,
       lastAccessed: null,
       accessCount: 0,
-      workerTracked: 0,
+      workerTracked: false,
       lastModified: f.lastModified,
       etag: f.etag,
       existsInS3: true
