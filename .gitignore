@@ -110,3 +110,6 @@ temp/
 .webdev/
 
 .project-config.json
+
+# generated vercel function bundle, built by 'pnpm run build'
+api/index.js
