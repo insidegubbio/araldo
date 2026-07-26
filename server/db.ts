@@ -85,8 +85,7 @@ export async function listFilesMetadata(prefix = "", search = "", page = 1, page
   const db = await getDb();
   if (!db) return { items: [], total: 0 };
 
-  // A search query looks across the whole bucket, not just the current
-  // folder — that's the more useful behavior when someone is searching.
+  //a search query looks across the whole bucket, not just the current folder
   const isSearching = search.trim().length > 0;
   const conditions = [];
   if (!isSearching && prefix) conditions.push(like(filesMetadata.s3Key, `${prefix}%`));
@@ -95,9 +94,7 @@ export async function listFilesMetadata(prefix = "", search = "", page = 1, page
   }
   const whereClause = conditions.length ? and(...conditions) : undefined;
 
-  // Fetch broadly and filter/paginate in JS, since "only immediate
-  // children of this folder" and "exclude the .gitkeep placeholder"
-  // aren't expressible as a simple SQL LIKE.
+  // fetch broadly and filter/paginate in js
   const rows = await db
     .select()
     .from(filesMetadata)
