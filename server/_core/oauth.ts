@@ -83,9 +83,11 @@ export function registerOAuthRoutes(app: Express) {
       res.redirect(302, "/");
     } catch (error) {
       console.error("[OAuth] GitHub callback failed", error);
+      const cause = error instanceof Error && "cause" in error ? (error as any).cause : undefined;
       res.status(500).json({
         error: "OAuth callback failed",
         debug: error instanceof Error ? error.message : String(error),
+        cause: cause instanceof Error ? cause.message : cause ? String(cause) : undefined,
       });
     }
   });
