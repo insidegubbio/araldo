@@ -29,8 +29,7 @@ export const filesRouter = router({
     )
     .query(async ({ input }) => {
       const isSearching = input.search.trim().length > 0;
-      // A search looks across the whole bucket; plain browsing is scoped
-      // to the current folder (prefix).
+      // A search looks across the whole bucket; plain browsing is scoped to current folder
       const s3Prefix = isSearching ? "" : input.prefix;
 
       const [s3Result, dbResult] = await Promise.all([
@@ -77,8 +76,6 @@ export const filesRouter = router({
         total: dbResult.total + s3Only.length,
         page: input.page,
         pageSize: input.pageSize,
-        // Subfolders of the current prefix. Empty while searching, since a
-        // search flattens results across the whole bucket.
         folders: isSearching ? [] : s3Result.folders,
         prefix: input.prefix,
       };
@@ -97,11 +94,7 @@ export const filesRouter = router({
       const uniqueKey = input.folder
         ? `${input.folder}/${nanoid()}.${ext}`
         : `${nanoid()}.${ext}`;
-      // The browser PUTs directly to S3 using this presigned URL. This keeps
-      // large file uploads off the serverless function entirely (Vercel
-      // functions have a hard 4.5MB request body limit and bill for
-      // duration/bandwidth). CORS errors here mean the bucket's CORS policy
-      // needs to allow PUT from this app's origin — see scripts/configure-s3-cors.ts.
+      // The browser PUTs directly to S3 using this presigned URL.
       const url = await getUploadPresignedUrl(uniqueKey, input.contentType);
       await upsertFileMetadata({
         s3Key: uniqueKey,
