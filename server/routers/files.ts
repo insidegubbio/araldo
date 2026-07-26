@@ -161,6 +161,27 @@ export const filesRouter = router({
       return { ok: true };
     }),
 
+  deleteMany: protectedProcedure
+    .input(z.object({ keys: z.array(z.string().min(1)).min(1).max(500) }))
+    .mutation(async ({ input, ctx }) => {
+      const results = await Promise.allSettled(
+        input.keys.map(async (key) => {
+          await deleteFile(key);
+          await deleteFileMetadata(key);
+          await notifyWorker({
+            key,
+            filename: key.split("/").pop() ?? key,
+            action: "delete",
+            userId: ctx.user.id,
+            timestamp: new Date().toISOString(),
+          });
+        })
+      );
+      const deleted = results.filter((r) => r.status === "fulfilled").length;
+      const failed = input.keys.filter((_, i) => results[i].status === "rejected");
+      return { deleted, failed };
+    }),
+
   workerStatus: publicProcedure.query(() => {
     return { enabled: Boolean(ENV.workerUrl), url: ENV.workerUrl ? "configured" : null };
   }),
