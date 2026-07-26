@@ -2,13 +2,13 @@ import { ENV } from "../_core/env";
 import { getClient } from "../s3";
 import { calculateBucketSize, renameFile } from "../s3";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { TRPCError } from "@trpc/server";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import {
   deleteFileMetadata,
   getFileMetadata,
+  getTopAccessedFiles,
   incrementAccessCount,
   listFilesMetadata,
   markWorkerTracked,
@@ -28,9 +28,14 @@ export const filesRouter = router({
       })
     )
     .query(async ({ input }) => {
+      const isSearching = input.search.trim().length > 0;
+      // A search looks across the whole bucket; plain browsing is scoped
+      // to the current folder (prefix).
+      const s3Prefix = isSearching ? "" : input.prefix;
+
       const [s3Result, dbResult] = await Promise.all([
-        listFiles(input.prefix, 1000),
-        listFilesMetadata(input.search, input.page, input.pageSize),
+        listFiles(s3Prefix, 1000),
+        listFilesMetadata(input.prefix, input.search, input.page, input.pageSize),
       ]);
 
       // merge s3 data with db metadata
@@ -72,6 +77,10 @@ export const filesRouter = router({
         total: dbResult.total + s3Only.length,
         page: input.page,
         pageSize: input.pageSize,
+        // Subfolders of the current prefix. Empty while searching, since a
+        // search flattens results across the whole bucket.
+        folders: isSearching ? [] : s3Result.folders,
+        prefix: input.prefix,
       };
     }),
 
@@ -88,6 +97,11 @@ export const filesRouter = router({
       const uniqueKey = input.folder
         ? `${input.folder}/${nanoid()}.${ext}`
         : `${nanoid()}.${ext}`;
+      // The browser PUTs directly to S3 using this presigned URL. This keeps
+      // large file uploads off the serverless function entirely (Vercel
+      // functions have a hard 4.5MB request body limit and bill for
+      // duration/bandwidth). CORS errors here mean the bucket's CORS policy
+      // needs to allow PUT from this app's origin — see scripts/configure-s3-cors.ts.
       const url = await getUploadPresignedUrl(uniqueKey, input.contentType);
       await upsertFileMetadata({
         s3Key: uniqueKey,
@@ -135,9 +149,6 @@ export const filesRouter = router({
   delete: protectedProcedure
     .input(z.object({ key: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
-      if (ctx.user.role !== "admin") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Only admins can delete files" });
-      }
       await deleteFile(input.key);
       await deleteFileMetadata(input.key);
       await notifyWorker({
@@ -155,9 +166,13 @@ export const filesRouter = router({
   }),
 
   mkdir: protectedProcedure
-    .input(z.object({ folderName: z.string().min(1).max(256) }))
+    .input(z.object({ folderName: z.string().min(1).max(256), prefix: z.string().optional().default("") }))
     .mutation(async ({ input }) => {
-      const key = `${input.folderName}/.gitkeep`;
+      const safeName = input.folderName.trim().replace(/\/+/g, "");
+      if (!safeName) {
+        throw new Error("Nome cartella non valido");
+      }
+      const key = `${input.prefix}${safeName}/.gitkeep`;
       const client = getClient();
       await client.send(new PutObjectCommand({
         Bucket: ENV.s3Bucket,
@@ -178,9 +193,6 @@ export const filesRouter = router({
   rename: protectedProcedure
     .input(z.object({ oldKey: z.string().min(1), newName: z.string().min(1).max(512) }))
     .mutation(async ({ input, ctx }) => {
-      if (ctx.user.role !== "admin") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Only admins can rename files" });
-      }
       const newKey = input.oldKey.includes("/")
         ? input.oldKey.split("/").slice(0, -1).join("/") + "/" + input.newName
         : input.newName;
@@ -212,6 +224,12 @@ export const filesRouter = router({
       totalSizeGB: (totalSize / (1024 * 1024 * 1024)).toFixed(2),
     };
   }),
+
+  topAccessed: protectedProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(50).optional().default(10) }))
+    .query(async ({ input }) => {
+      return getTopAccessedFiles(input.limit);
+    }),
 
   settings: publicProcedure.query(() => {
     return {
