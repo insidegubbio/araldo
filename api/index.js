@@ -14,7 +14,7 @@ var OAUTH_STATE_COOKIE = "__Host-oauth_state";
 import { parse as parseCookieHeader2 } from "cookie";
 
 // server/db.ts
-import { desc, eq, like, or, sql } from "drizzle-orm";
+import { and, desc, eq, like, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 
 // drizzle/schema.ts
@@ -60,6 +60,7 @@ var ENV = {
   s3AccessKey: process.env.S3_ACCESS_KEY ?? "",
   s3SecretKey: process.env.S3_SECRET_KEY ?? "",
   workerUrl: process.env.WORKER_URL ?? "",
+  corsAllowedOrigins: (process.env.CORS_ALLOWED_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
   githubClientId: process.env.GITHUB_CLIENT_ID ?? "",
   githubClientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
   allowedGithubLogins: (process.env.ALLOWED_GITHUB_LOGINS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)
@@ -134,16 +135,27 @@ async function getFileMetadata(s3Key) {
   const result = await db.select().from(filesMetadata).where(eq(filesMetadata.s3Key, s3Key)).limit(1);
   return result[0];
 }
-async function listFilesMetadata(search = "", page = 1, pageSize = 50) {
+async function listFilesMetadata(prefix = "", search = "", page = 1, pageSize = 50) {
   const db = await getDb();
   if (!db) return { items: [], total: 0 };
+  const isSearching = search.trim().length > 0;
+  const conditions = [];
+  if (!isSearching && prefix) conditions.push(like(filesMetadata.s3Key, `${prefix}%`));
+  if (isSearching) {
+    conditions.push(or(like(filesMetadata.filename, `%${search}%`), like(filesMetadata.s3Key, `%${search}%`)));
+  }
+  const whereClause = conditions.length ? and(...conditions) : void 0;
+  const rows = await db.select().from(filesMetadata).where(whereClause).orderBy(desc(filesMetadata.uploadedAt)).limit(1e3);
+  const filtered = rows.filter((row) => {
+    if (row.filename === ".gitkeep") return false;
+    if (isSearching) return true;
+    const rest = row.s3Key.slice(prefix.length);
+    return !rest.includes("/");
+  });
+  const total = filtered.length;
   const offset = (page - 1) * pageSize;
-  const whereClause = search ? or(like(filesMetadata.filename, `%${search}%`), like(filesMetadata.s3Key, `%${search}%`)) : void 0;
-  const [items, countResult] = await Promise.all([
-    db.select().from(filesMetadata).where(whereClause).orderBy(desc(filesMetadata.uploadedAt)).limit(pageSize).offset(offset),
-    db.select({ count: sql`count(*)` }).from(filesMetadata).where(whereClause)
-  ]);
-  return { items, total: Number(countResult[0]?.count ?? 0) };
+  const items = filtered.slice(offset, offset + pageSize);
+  return { items, total };
 }
 async function deleteFileMetadata(s3Key) {
   const db = await getDb();
@@ -154,6 +166,16 @@ async function incrementAccessCount(s3Key) {
   const db = await getDb();
   if (!db) return;
   await db.update(filesMetadata).set({ accessCount: sql`access_count + 1`, lastAccessed: /* @__PURE__ */ new Date() }).where(eq(filesMetadata.s3Key, s3Key));
+}
+async function getTopAccessedFiles(limit = 10) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    s3Key: filesMetadata.s3Key,
+    filename: filesMetadata.filename,
+    accessCount: filesMetadata.accessCount,
+    lastAccessed: filesMetadata.lastAccessed
+  }).from(filesMetadata).where(sql`${filesMetadata.accessCount} > 0`).orderBy(desc(filesMetadata.accessCount)).limit(limit);
 }
 
 // server/_core/cookies.ts
@@ -400,13 +422,11 @@ function registerOAuthRoutes(app2) {
       res.redirect(302, "/");
     } catch (error) {
       console.error("[OAuth] GitHub callback failed", error);
+      const cause = error instanceof Error && "cause" in error ? error.cause : void 0;
       res.status(500).json({
         error: "OAuth callback failed",
-        debug: error?.message,
-        cause: error?.cause?.message ?? error?.cause,
-        code: error?.code ?? error?.cause?.code,
-        errno: error?.errno ?? error?.cause?.errno,
-        sqlMessage: error?.sqlMessage ?? error?.cause?.sqlMessage
+        debug: error instanceof Error ? error.message : String(error),
+        cause: cause instanceof Error ? cause.message : cause ? String(cause) : void 0
       });
     }
   });
@@ -596,29 +616,144 @@ var systemRouter = router({
   })
 });
 
+// package.json
+var package_default = {
+  name: "araldo",
+  version: "1.1.0",
+  type: "module",
+  license: "GPL-3.0-only",
+  scripts: {
+    dev: "NODE_ENV=development tsx watch server/_core/index.ts",
+    build: "vite build && esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist && mkdir -p api && esbuild server/_core/vercelHandler.ts --platform=node --packages=external --bundle --format=esm --outfile=api/index.js",
+    start: "NODE_ENV=production node dist/index.js",
+    check: "tsc --noEmit",
+    format: "prettier --write .",
+    test: "vitest run",
+    "db:push": "drizzle-kit generate && drizzle-kit migrate"
+  },
+  dependencies: {
+    "@aws-sdk/client-s3": "^3.693.0",
+    "@aws-sdk/s3-request-presigner": "^3.693.0",
+    "@hookform/resolvers": "^5.2.2",
+    "@neondatabase/serverless": "^0.10.4",
+    "@radix-ui/react-accordion": "^1.2.12",
+    "@radix-ui/react-alert-dialog": "^1.1.15",
+    "@radix-ui/react-aspect-ratio": "^1.1.7",
+    "@radix-ui/react-avatar": "^1.1.10",
+    "@radix-ui/react-checkbox": "^1.3.3",
+    "@radix-ui/react-collapsible": "^1.1.12",
+    "@radix-ui/react-context-menu": "^2.2.16",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@radix-ui/react-hover-card": "^1.1.15",
+    "@radix-ui/react-label": "^2.1.7",
+    "@radix-ui/react-menubar": "^1.1.16",
+    "@radix-ui/react-navigation-menu": "^1.2.14",
+    "@radix-ui/react-popover": "^1.1.15",
+    "@radix-ui/react-progress": "^1.1.7",
+    "@radix-ui/react-radio-group": "^1.3.8",
+    "@radix-ui/react-scroll-area": "^1.2.10",
+    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-separator": "^1.1.7",
+    "@radix-ui/react-slider": "^1.3.6",
+    "@radix-ui/react-slot": "^1.2.3",
+    "@radix-ui/react-switch": "^1.2.6",
+    "@radix-ui/react-tabs": "^1.1.13",
+    "@radix-ui/react-toggle": "^1.1.10",
+    "@radix-ui/react-toggle-group": "^1.1.11",
+    "@radix-ui/react-tooltip": "^1.2.8",
+    "@tanstack/react-query": "^5.90.2",
+    "@trpc/client": "^11.6.0",
+    "@trpc/react-query": "^11.6.0",
+    "@trpc/server": "^11.6.0",
+    axios: "^1.12.0",
+    "class-variance-authority": "^0.7.1",
+    clsx: "^2.1.1",
+    cmdk: "^1.1.1",
+    cookie: "^1.0.2",
+    "date-fns": "^4.1.0",
+    dotenv: "^17.2.2",
+    "drizzle-orm": "^0.44.5",
+    "embla-carousel-react": "^8.6.0",
+    express: "^4.21.2",
+    "framer-motion": "^12.23.22",
+    "input-otp": "^1.4.2",
+    jose: "6.1.0",
+    "lucide-react": "^0.453.0",
+    nanoid: "^5.1.5",
+    "next-themes": "^0.4.6",
+    react: "^19.2.1",
+    "react-day-picker": "^9.11.1",
+    "react-dom": "^19.2.1",
+    "react-hook-form": "^7.64.0",
+    "react-resizable-panels": "^3.0.6",
+    recharts: "^2.15.2",
+    sonner: "^2.0.7",
+    streamdown: "^1.4.0",
+    superjson: "^1.13.3",
+    "tailwind-merge": "^3.3.1",
+    "tailwindcss-animate": "^1.0.7",
+    vaul: "^1.1.2",
+    wouter: "^3.3.5",
+    zod: "^4.1.12"
+  },
+  devDependencies: {
+    "@builder.io/vite-plugin-jsx-loc": "^0.1.1",
+    "@tailwindcss/typography": "^0.5.15",
+    "@tailwindcss/vite": "^4.1.3",
+    "@types/express": "4.17.21",
+    "@types/google.maps": "^3.58.1",
+    "@types/node": "^24.7.0",
+    "@types/react": "^19.2.1",
+    "@types/react-dom": "^19.2.1",
+    "@vitejs/plugin-react": "^5.0.4",
+    add: "^2.0.6",
+    autoprefixer: "^10.4.20",
+    "drizzle-kit": "^0.31.4",
+    esbuild: "^0.25.0",
+    pnpm: "^10.15.1",
+    postcss: "^8.4.47",
+    prettier: "^3.6.2",
+    tailwindcss: "^4.1.14",
+    tsx: "^4.19.1",
+    "tw-animate-css": "^1.4.0",
+    typescript: "5.9.3",
+    vite: "^7.1.7",
+    vitest: "^2.1.4"
+  },
+  packageManager: "pnpm@10.15.1"
+};
+
+// server/version.ts
+var APP_VERSION = package_default.version;
+
 // server/s3.ts
 import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
+  PutBucketCorsCommand,
   PutObjectCommand,
   S3Client
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 function getClient() {
-  const config = {
+  const config2 = {
     region: ENV.s3Region,
     credentials: {
       accessKeyId: ENV.s3AccessKey,
       secretAccessKey: ENV.s3SecretKey
-    }
+    },
+    // newer AWS SDK v3 versions default to adding a flexible checksum to requests
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED"
   };
   if (ENV.s3Endpoint) {
-    config.endpoint = ENV.s3Endpoint.startsWith("https://") ? ENV.s3Endpoint : `https://${ENV.s3Endpoint}`;
-    config.forcePathStyle = true;
+    config2.endpoint = ENV.s3Endpoint.startsWith("https://") ? ENV.s3Endpoint : `https://${ENV.s3Endpoint}`;
+    config2.forcePathStyle = true;
   }
-  return new S3Client(config);
+  return new S3Client(config2);
 }
 async function listFiles(prefix = "", maxKeys = 1e3, continuationToken) {
   const client = getClient();
@@ -626,21 +761,53 @@ async function listFiles(prefix = "", maxKeys = 1e3, continuationToken) {
     Bucket: ENV.s3Bucket,
     Prefix: prefix,
     MaxKeys: maxKeys,
-    ContinuationToken: continuationToken
+    ContinuationToken: continuationToken,
+    // Group keys that share the same "folder" segment under commonprefixes
+    // instead of flattening the whole subtree into Contents.
+    Delimiter: "/"
   });
   const res = await client.send(cmd);
-  const items = (res.Contents ?? []).map((obj) => ({
-    key: obj.Key ?? "",
-    filename: (obj.Key ?? "").split("/").pop() ?? obj.Key ?? "",
-    size: obj.Size ?? 0,
-    lastModified: obj.LastModified ?? /* @__PURE__ */ new Date(),
-    etag: obj.ETag?.replace(/"/g, "")
+  const items = (res.Contents ?? []).map((obj) => {
+    const rawName = (obj.Key ?? "").split("/").pop() ?? obj.Key ?? "";
+    const displayName = rawName.replace(/^[A-Za-z0-9_-]{6,14}-/, "");
+    return {
+      key: obj.Key ?? "",
+      filename: displayName || rawName,
+      size: obj.Size ?? 0,
+      lastModified: obj.LastModified ?? /* @__PURE__ */ new Date(),
+      etag: obj.ETag?.replace(/"/g, "")
+    };
+  });
+  const folders = (res.CommonPrefixes ?? []).map((cp) => cp.Prefix ?? "").filter(Boolean).map((p) => ({
+    prefix: p,
+    name: p.replace(prefix, "").replace(/\/$/, "")
   }));
   return {
     items,
+    folders,
     nextToken: res.NextContinuationToken,
     isTruncated: res.IsTruncated ?? false
   };
+}
+async function listAllKeysUnderPrefix(prefix) {
+  const client = getClient();
+  const keys = [];
+  let continuationToken;
+  do {
+    const res = await client.send(
+      new ListObjectsV2Command({
+        Bucket: ENV.s3Bucket,
+        Prefix: prefix,
+        MaxKeys: 1e3,
+        ContinuationToken: continuationToken
+      })
+    );
+    (res.Contents ?? []).forEach((obj) => {
+      if (obj.Key) keys.push(obj.Key);
+    });
+    continuationToken = res.NextContinuationToken;
+  } while (continuationToken);
+  return keys;
 }
 async function getUploadPresignedUrl(key, contentType, expiresIn = 3600) {
   const client = getClient();
@@ -650,6 +817,26 @@ async function getUploadPresignedUrl(key, contentType, expiresIn = 3600) {
     ContentType: contentType
   });
   return getSignedUrl(client, cmd, { expiresIn });
+}
+async function configureBucketCors(allowedOrigins) {
+  const client = getClient();
+  const origins = allowedOrigins.length > 0 ? allowedOrigins : ["*"];
+  await client.send(
+    new PutBucketCorsCommand({
+      Bucket: ENV.s3Bucket,
+      CORSConfiguration: {
+        CORSRules: [
+          {
+            AllowedOrigins: origins,
+            AllowedMethods: ["GET", "PUT", "HEAD"],
+            AllowedHeaders: ["*"],
+            ExposeHeaders: ["ETag"],
+            MaxAgeSeconds: 3e3
+          }
+        ]
+      }
+    })
+  );
 }
 async function getDownloadPresignedUrl(key, expiresIn = 3600) {
   const client = getClient();
@@ -730,9 +917,11 @@ var filesRouter = router({
       prefix: z2.string().optional().default("")
     })
   ).query(async ({ input }) => {
+    const isSearching = input.search.trim().length > 0;
+    const s3Prefix = isSearching ? "" : input.prefix;
     const [s3Result, dbResult] = await Promise.all([
-      listFiles(input.prefix, 1e3),
-      listFilesMetadata(input.search, input.page, input.pageSize)
+      listFiles(s3Prefix, 1e3),
+      listFilesMetadata(input.prefix, input.search, input.page, input.pageSize)
     ]);
     const s3Map = new Map(s3Result.items.map((f) => [f.key, f]));
     const enriched = dbResult.items.map((meta) => {
@@ -765,7 +954,10 @@ var filesRouter = router({
       items: allItems,
       total: dbResult.total + s3Only.length,
       page: input.page,
-      pageSize: input.pageSize
+      pageSize: input.pageSize,
+      // Subfolders of the current prefix
+      folders: isSearching ? [] : s3Result.folders,
+      prefix: input.prefix
     };
   }),
   getUploadUrl: protectedProcedure.input(
@@ -775,8 +967,8 @@ var filesRouter = router({
       folder: z2.string().optional().default("")
     })
   ).mutation(async ({ input, ctx }) => {
-    const ext = input.filename.includes(".") ? input.filename.split(".").pop() : "";
-    const uniqueKey = input.folder ? `${input.folder}/${nanoid()}.${ext}` : `${nanoid()}.${ext}`;
+    const safeName = input.filename.normalize("NFKD").replace(/[^\w.\- ]/g, "").trim().slice(0, 200) || "file";
+    const uniqueKey = input.folder ? `${input.folder}/${nanoid(8)}-${safeName}` : `${nanoid(8)}-${safeName}`;
     const url = await getUploadPresignedUrl(uniqueKey, input.contentType);
     await upsertFileMetadata({
       s3Key: uniqueKey,
@@ -815,9 +1007,6 @@ var filesRouter = router({
     return { downloadUrl: url };
   }),
   delete: protectedProcedure.input(z2.object({ key: z2.string().min(1) })).mutation(async ({ input, ctx }) => {
-    if (ctx.user.role !== "admin") {
-      throw new TRPCError3({ code: "FORBIDDEN", message: "Only admins can delete files" });
-    }
     await deleteFile(input.key);
     await deleteFileMetadata(input.key);
     await notifyWorker({
@@ -829,11 +1018,41 @@ var filesRouter = router({
     });
     return { ok: true };
   }),
+  deleteMany: protectedProcedure.input(z2.object({ keys: z2.array(z2.string().min(1)).min(1).max(500) })).mutation(async ({ input, ctx }) => {
+    const results = await Promise.allSettled(
+      input.keys.map(async (key) => {
+        await deleteFile(key);
+        await deleteFileMetadata(key);
+        await notifyWorker({
+          key,
+          filename: key.split("/").pop() ?? key,
+          action: "delete",
+          userId: ctx.user.id,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString()
+        });
+      })
+    );
+    const deleted = results.filter((r) => r.status === "fulfilled").length;
+    const failed = input.keys.filter((_, i) => results[i].status === "rejected");
+    return { deleted, failed };
+  }),
   workerStatus: publicProcedure.query(() => {
     return { enabled: Boolean(ENV.workerUrl), url: ENV.workerUrl ? "configured" : null };
   }),
-  mkdir: protectedProcedure.input(z2.object({ folderName: z2.string().min(1).max(256) })).mutation(async ({ input }) => {
-    const key = `${input.folderName}/.gitkeep`;
+  configureCors: protectedProcedure.mutation(async () => {
+    if (!ENV.s3Bucket) {
+      throw new TRPCError3({ code: "PRECONDITION_FAILED", message: "S3_BUCKET non \xE8 configurato" });
+    }
+    const origins = ENV.corsAllowedOrigins.length > 0 ? ENV.corsAllowedOrigins : ["*"];
+    await configureBucketCors(origins);
+    return { origins };
+  }),
+  mkdir: protectedProcedure.input(z2.object({ folderName: z2.string().min(1).max(256), prefix: z2.string().optional().default("") })).mutation(async ({ input }) => {
+    const safeName = input.folderName.trim().replace(/\/+/g, "");
+    if (!safeName) {
+      throw new Error("Nome cartella non valido");
+    }
+    const key = `${input.prefix}${safeName}/.gitkeep`;
     const client = getClient();
     await client.send(new PutObjectCommand2({
       Bucket: ENV.s3Bucket,
@@ -851,19 +1070,17 @@ var filesRouter = router({
     return { ok: true, key };
   }),
   rename: protectedProcedure.input(z2.object({ oldKey: z2.string().min(1), newName: z2.string().min(1).max(512) })).mutation(async ({ input, ctx }) => {
-    if (ctx.user.role !== "admin") {
-      throw new TRPCError3({ code: "FORBIDDEN", message: "Only admins can rename files" });
-    }
     const newKey = input.oldKey.includes("/") ? input.oldKey.split("/").slice(0, -1).join("/") + "/" + input.newName : input.newName;
+    const oldMeta = await getFileMetadata(input.oldKey);
     await renameFile(input.oldKey, newKey);
     await deleteFileMetadata(input.oldKey);
     await upsertFileMetadata({
       s3Key: newKey,
       filename: input.newName,
-      size: 0,
-      mimeType: null,
-      uploadedBy: ctx.user.id,
-      uploadedAt: /* @__PURE__ */ new Date()
+      size: oldMeta?.size ?? 0,
+      mimeType: oldMeta?.mimeType ?? null,
+      uploadedBy: oldMeta?.uploadedBy ?? ctx.user.id,
+      uploadedAt: oldMeta?.uploadedAt ?? /* @__PURE__ */ new Date()
     });
     await notifyWorker({
       key: newKey,
@@ -874,6 +1091,59 @@ var filesRouter = router({
     });
     return { ok: true, newKey };
   }),
+  deleteFolder: protectedProcedure.input(z2.object({ prefix: z2.string().min(1) })).mutation(async ({ input, ctx }) => {
+    const normalizedPrefix = input.prefix.endsWith("/") ? input.prefix : `${input.prefix}/`;
+    const keys = await listAllKeysUnderPrefix(normalizedPrefix);
+    await Promise.allSettled(
+      keys.map(async (key) => {
+        await deleteFile(key);
+        await deleteFileMetadata(key);
+      })
+    );
+    await notifyWorker({
+      key: normalizedPrefix,
+      filename: normalizedPrefix.replace(/\/$/, "").split("/").pop() ?? normalizedPrefix,
+      action: "delete",
+      userId: ctx.user.id,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    return { ok: true, deleted: keys.length };
+  }),
+  renameFolder: protectedProcedure.input(z2.object({ oldPrefix: z2.string().min(1), newName: z2.string().min(1).max(256) })).mutation(async ({ input, ctx }) => {
+    const safeName = input.newName.trim().replace(/\/+/g, "");
+    if (!safeName) {
+      throw new TRPCError3({ code: "BAD_REQUEST", message: "Nome cartella non valido" });
+    }
+    const normalizedOld = input.oldPrefix.endsWith("/") ? input.oldPrefix : `${input.oldPrefix}/`;
+    const parent = normalizedOld.split("/").slice(0, -2).join("/");
+    const normalizedNew = parent ? `${parent}/${safeName}/` : `${safeName}/`;
+    if (normalizedNew === normalizedOld) {
+      return { ok: true, newPrefix: normalizedNew };
+    }
+    const keys = await listAllKeysUnderPrefix(normalizedOld);
+    for (const oldKey of keys) {
+      const newKey = normalizedNew + oldKey.slice(normalizedOld.length);
+      const oldMeta = await getFileMetadata(oldKey);
+      await renameFile(oldKey, newKey);
+      await deleteFileMetadata(oldKey);
+      await upsertFileMetadata({
+        s3Key: newKey,
+        filename: oldMeta?.filename ?? newKey.split("/").pop() ?? newKey,
+        size: oldMeta?.size ?? 0,
+        mimeType: oldMeta?.mimeType ?? null,
+        uploadedBy: oldMeta?.uploadedBy ?? ctx.user.id,
+        uploadedAt: oldMeta?.uploadedAt ?? /* @__PURE__ */ new Date()
+      });
+    }
+    await notifyWorker({
+      key: normalizedNew,
+      filename: safeName,
+      action: "upload",
+      userId: ctx.user.id,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    return { ok: true, newPrefix: normalizedNew };
+  }),
   storageStats: protectedProcedure.query(async () => {
     const { totalSize, fileCount } = await calculateBucketSize();
     return {
@@ -882,12 +1152,16 @@ var filesRouter = router({
       totalSizeGB: (totalSize / (1024 * 1024 * 1024)).toFixed(2)
     };
   }),
+  topAccessed: protectedProcedure.input(z2.object({ limit: z2.number().int().min(1).max(50).optional().default(10) })).query(async ({ input }) => {
+    return getTopAccessedFiles(input.limit);
+  }),
   settings: publicProcedure.query(() => {
     return {
       bucket: ENV.s3Bucket,
       region: ENV.s3Region,
       endpoint: ENV.s3Endpoint,
-      workerUrl: ENV.workerUrl ? "configured" : null
+      workerUrl: ENV.workerUrl ? "configured" : null,
+      version: APP_VERSION
     };
   })
 });
@@ -939,10 +1213,14 @@ function createApp() {
 }
 
 // server/_core/vercelHandler.ts
+var config = {
+  maxDuration: 30
+};
 var app = createApp();
 function handler(req, res) {
   return app(req, res);
 }
 export {
+  config,
   handler as default
 };
