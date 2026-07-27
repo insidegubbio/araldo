@@ -2,6 +2,7 @@ import { ENV } from "../_core/env";
 import { getClient } from "../s3";
 import { calculateBucketSize, renameFile } from "../s3";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { TRPCError } from "@trpc/server";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
@@ -14,7 +15,7 @@ import {
   markWorkerTracked,
   upsertFileMetadata,
 } from "../db";
-import { deleteFile, getDownloadPresignedUrl, getUploadPresignedUrl, listFiles } from "../s3";
+import { deleteFile, getDownloadPresignedUrl, getUploadPresignedUrl, listFiles, configureBucketCors, listAllKeysUnderPrefix } from "../s3";
 import { notifyWorker } from "../worker";
 
 export const filesRouter = router({
@@ -29,7 +30,7 @@ export const filesRouter = router({
     )
     .query(async ({ input }) => {
       const isSearching = input.search.trim().length > 0;
-      // A search looks across the whole bucket; plain browsing is scoped to current folder
+      // A search looks across the whole bucket; plain browsing is scoped to the current folder.
       const s3Prefix = isSearching ? "" : input.prefix;
 
       const [s3Result, dbResult] = await Promise.all([
@@ -76,6 +77,7 @@ export const filesRouter = router({
         total: dbResult.total + s3Only.length,
         page: input.page,
         pageSize: input.pageSize,
+        // Subfolders of the current prefix
         folders: isSearching ? [] : s3Result.folders,
         prefix: input.prefix,
       };
@@ -90,11 +92,16 @@ export const filesRouter = router({
       })
     )
     .mutation(async ({ input, ctx }) => {
-      const ext = input.filename.includes(".") ? input.filename.split(".").pop() : "";
+      //keep the original filename readable in the S3 key itself
+      const safeName = input.filename
+        .normalize("NFKD")
+        .replace(/[^\w.\- ]/g, "")
+        .trim()
+        .slice(0, 200) || "file";
       const uniqueKey = input.folder
-        ? `${input.folder}/${nanoid()}.${ext}`
-        : `${nanoid()}.${ext}`;
-      // The browser PUTs directly to S3 using this presigned URL.
+        ? `${input.folder}/${nanoid(8)}-${safeName}`
+        : `${nanoid(8)}-${safeName}`;
+      // browser PUTs directly to S3 using this presigned url
       const url = await getUploadPresignedUrl(uniqueKey, input.contentType);
       await upsertFileMetadata({
         s3Key: uniqueKey,
@@ -179,6 +186,15 @@ export const filesRouter = router({
     return { enabled: Boolean(ENV.workerUrl), url: ENV.workerUrl ? "configured" : null };
   }),
 
+  configureCors: protectedProcedure.mutation(async () => {
+    if (!ENV.s3Bucket) {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: "S3_BUCKET non è configurato" });
+    }
+    const origins = ENV.corsAllowedOrigins.length > 0 ? ENV.corsAllowedOrigins : ["*"];
+    await configureBucketCors(origins);
+    return { origins };
+  }),
+
   mkdir: protectedProcedure
     .input(z.object({ folderName: z.string().min(1).max(256), prefix: z.string().optional().default("") }))
     .mutation(async ({ input }) => {
@@ -210,15 +226,16 @@ export const filesRouter = router({
       const newKey = input.oldKey.includes("/")
         ? input.oldKey.split("/").slice(0, -1).join("/") + "/" + input.newName
         : input.newName;
+      const oldMeta = await getFileMetadata(input.oldKey);
       await renameFile(input.oldKey, newKey);
       await deleteFileMetadata(input.oldKey);
       await upsertFileMetadata({
         s3Key: newKey,
         filename: input.newName,
-        size: 0,
-        mimeType: null,
-        uploadedBy: ctx.user.id,
-        uploadedAt: new Date(),
+        size: oldMeta?.size ?? 0,
+        mimeType: oldMeta?.mimeType ?? null,
+        uploadedBy: oldMeta?.uploadedBy ?? ctx.user.id,
+        uploadedAt: oldMeta?.uploadedAt ?? new Date(),
       });
       await notifyWorker({
         key: newKey,
@@ -228,6 +245,67 @@ export const filesRouter = router({
         timestamp: new Date().toISOString(),
       });
       return { ok: true, newKey };
+    }),
+
+  deleteFolder: protectedProcedure
+    .input(z.object({ prefix: z.string().min(1) }))
+    .mutation(async ({ input, ctx }) => {
+      const normalizedPrefix = input.prefix.endsWith("/") ? input.prefix : `${input.prefix}/`;
+      const keys = await listAllKeysUnderPrefix(normalizedPrefix);
+      await Promise.allSettled(
+        keys.map(async (key) => {
+          await deleteFile(key);
+          await deleteFileMetadata(key);
+        })
+      );
+      await notifyWorker({
+        key: normalizedPrefix,
+        filename: normalizedPrefix.replace(/\/$/, "").split("/").pop() ?? normalizedPrefix,
+        action: "delete",
+        userId: ctx.user.id,
+        timestamp: new Date().toISOString(),
+      });
+      return { ok: true, deleted: keys.length };
+    }),
+
+  renameFolder: protectedProcedure
+    .input(z.object({ oldPrefix: z.string().min(1), newName: z.string().min(1).max(256) }))
+    .mutation(async ({ input, ctx }) => {
+      const safeName = input.newName.trim().replace(/\/+/g, "");
+      if (!safeName) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Nome cartella non valido" });
+      }
+      const normalizedOld = input.oldPrefix.endsWith("/") ? input.oldPrefix : `${input.oldPrefix}/`;
+      const parent = normalizedOld.split("/").slice(0, -2).join("/");
+      const normalizedNew = parent ? `${parent}/${safeName}/` : `${safeName}/`;
+
+      if (normalizedNew === normalizedOld) {
+        return { ok: true, newPrefix: normalizedNew };
+      }
+
+      const keys = await listAllKeysUnderPrefix(normalizedOld);
+      for (const oldKey of keys) {
+        const newKey = normalizedNew + oldKey.slice(normalizedOld.length);
+        const oldMeta = await getFileMetadata(oldKey);
+        await renameFile(oldKey, newKey);
+        await deleteFileMetadata(oldKey);
+        await upsertFileMetadata({
+          s3Key: newKey,
+          filename: oldMeta?.filename ?? newKey.split("/").pop() ?? newKey,
+          size: oldMeta?.size ?? 0,
+          mimeType: oldMeta?.mimeType ?? null,
+          uploadedBy: oldMeta?.uploadedBy ?? ctx.user.id,
+          uploadedAt: oldMeta?.uploadedAt ?? new Date(),
+        });
+      }
+      await notifyWorker({
+        key: normalizedNew,
+        filename: safeName,
+        action: "upload",
+        userId: ctx.user.id,
+        timestamp: new Date().toISOString(),
+      });
+      return { ok: true, newPrefix: normalizedNew };
     }),
 
   storageStats: protectedProcedure.query(async () => {
@@ -251,6 +329,7 @@ export const filesRouter = router({
       region: ENV.s3Region,
       endpoint: ENV.s3Endpoint,
       workerUrl: ENV.workerUrl ? "configured" : null,
+      version: APP_VERSION,
     };
   }),
 });

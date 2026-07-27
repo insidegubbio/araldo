@@ -71,6 +71,9 @@ export default function Dashboard() {
   const [newFolderName, setNewFolderName] = useState("");
   const [renameTarget, setRenameTarget] = useState<{ key: string; filename: string } | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [folderDeleteConfirm, setFolderDeleteConfirm] = useState<string | null>(null);
+  const [folderRenameTarget, setFolderRenameTarget] = useState<{ prefix: string; name: string } | null>(null);
+  const [folderRenameValue, setFolderRenameValue] = useState("");
   const [currentPrefix, setCurrentPrefix] = useState("");
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
@@ -141,6 +144,23 @@ export default function Dashboard() {
     },
     onError: (e) => toast.error(e.message),
   });
+  const deleteFolderMutation = trpc.files.deleteFolder.useMutation({
+    onSuccess: () => {
+      toast.success("Cartella eliminata");
+      utils.files.list.invalidate();
+      setFolderDeleteConfirm(null);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const renameFolderMutation = trpc.files.renameFolder.useMutation({
+    onSuccess: () => {
+      toast.success("Cartella rinominata");
+      utils.files.list.invalidate();
+      setFolderRenameTarget(null);
+      setFolderRenameValue("");
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   const toggleSelected = (key: string) => {
     setSelectedKeys((prev) => {
@@ -195,6 +215,22 @@ export default function Dashboard() {
       return;
     }
     renameMutation.mutate({ oldKey: renameTarget.key, newName: renameValue.trim() });
+  };
+
+  const handleRenameFolder = () => {
+    if (!folderRenameTarget) return;
+    if (!folderRenameValue.trim()) {
+      toast.error("Nome cartella non valido");
+      return;
+    }
+    if (folderRenameValue.trim() === folderRenameTarget.name) {
+      setFolderRenameTarget(null);
+      return;
+    }
+    renameFolderMutation.mutate({
+      oldPrefix: folderRenameTarget.prefix,
+      newName: folderRenameValue.trim(),
+    });
   };
 
   const handleCreateFolder = () => {
@@ -373,17 +409,42 @@ export default function Dashboard() {
               ) : (
                 <div className="divide-y divide-border">
                   {data?.folders?.map((folder) => (
-                    <button
+                    <div
                       key={folder.prefix}
-                      onClick={() => openFolder(folder.prefix)}
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors text-left"
+                      className="flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors group"
                     >
-                      <Folder className="w-5 h-5 text-muted-foreground shrink-0 fill-muted-foreground/20" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{folder.name}</p>
+                      <button
+                        onClick={() => openFolder(folder.prefix)}
+                        className="flex-1 min-w-0 flex items-center gap-3 text-left"
+                      >
+                        <Folder className="w-5 h-5 text-muted-foreground shrink-0 fill-muted-foreground/20" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{folder.name}</p>
+                        </div>
+                      </button>
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                        <button
+                          onClick={() => {
+                            setFolderRenameTarget({ prefix: folder.prefix, name: folder.name });
+                            setFolderRenameValue(folder.name);
+                          }}
+                          className="p-1.5 rounded hover:bg-muted transition-colors"
+                          title="Rinomina cartella"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setFolderDeleteConfirm(folder.prefix)}
+                          className="p-1.5 rounded hover:bg-muted transition-colors text-destructive"
+                          title="Elimina cartella"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
-                      <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                    </button>
+                      <button onClick={() => openFolder(folder.prefix)} className="shrink-0">
+                        <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                      </button>
+                    </div>
                   ))}
                   {data?.items?.map((file) => (
                     <div
@@ -594,6 +655,61 @@ export default function Dashboard() {
               className="px-4 py-2 text-sm bg-foreground text-background rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60"
             >
               {renameMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                "Rinomina"
+              )}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={!!folderDeleteConfirm} onOpenChange={(o) => !o && setFolderDeleteConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Elimina cartella</AlertDialogTitle>
+            <AlertDialogDescription>
+              Questa azione è irreversibile. La cartella e tutto il suo contenuto verranno eliminati definitivamente dal bucket S3.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annulla</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => folderDeleteConfirm && deleteFolderMutation.mutate({ prefix: folderDeleteConfirm })}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteFolderMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Elimina"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={!!folderRenameTarget} onOpenChange={(o) => !o && setFolderRenameTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rinomina cartella</DialogTitle>
+          </DialogHeader>
+          <input
+            type="text"
+            value={folderRenameValue}
+            onChange={(e) => setFolderRenameValue(e.target.value)}
+            placeholder="Nuovo nome cartella"
+            className="w-full px-3 py-2 border border-border rounded-lg text-sm"
+            onKeyDown={(e) => e.key === "Enter" && handleRenameFolder()}
+            autoFocus
+          />
+          <DialogFooter>
+            <button
+              onClick={() => setFolderRenameTarget(null)}
+              className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors"
+            >
+              Annulla
+            </button>
+            <button
+              onClick={handleRenameFolder}
+              disabled={renameFolderMutation.isPending}
+              className="px-4 py-2 text-sm bg-foreground text-background rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60"
+            >
+              {renameFolderMutation.isPending ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 "Rinomina"
