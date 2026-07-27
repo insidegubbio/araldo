@@ -30,8 +30,7 @@ export const filesRouter = router({
     )
     .query(async ({ input }) => {
       const isSearching = input.search.trim().length > 0;
-      // A search looks across the whole bucket; plain browsing is scoped
-      // to the current folder (prefix).
+      // A search looks across the whole bucket; plain browsing is scoped to the current folder.
       const s3Prefix = isSearching ? "" : input.prefix;
 
       const [s3Result, dbResult] = await Promise.all([
@@ -78,8 +77,7 @@ export const filesRouter = router({
         total: dbResult.total + s3Only.length,
         page: input.page,
         pageSize: input.pageSize,
-        // Subfolders of the current prefix. Empty while searching, since a
-        // search flattens results across the whole bucket.
+        // Subfolders of the current prefix
         folders: isSearching ? [] : s3Result.folders,
         prefix: input.prefix,
       };
@@ -94,9 +92,7 @@ export const filesRouter = router({
       })
     )
     .mutation(async ({ input, ctx }) => {
-      // Keep the original filename readable in the S3 key itself (not just in
-      // the DB) - a short random prefix avoids collisions between uploads of
-      // files with the same name, without hiding the real name.
+      //keep the original filename readable in the S3 key itself
       const safeName = input.filename
         .normalize("NFKD")
         .replace(/[^\w.\- ]/g, "")
@@ -105,11 +101,7 @@ export const filesRouter = router({
       const uniqueKey = input.folder
         ? `${input.folder}/${nanoid(8)}-${safeName}`
         : `${nanoid(8)}-${safeName}`;
-      // The browser PUTs directly to S3 using this presigned URL. This keeps
-      // large file uploads off the serverless function entirely (Vercel
-      // functions have a hard 4.5MB request body limit and bill for
-      // duration/bandwidth). CORS errors here mean the bucket's CORS policy
-      // needs to allow PUT from this app's origin — see scripts/configure-s3-cors.ts.
+      // browser PUTs directly to S3 using this presigned url
       const url = await getUploadPresignedUrl(uniqueKey, input.contentType);
       await upsertFileMetadata({
         s3Key: uniqueKey,
