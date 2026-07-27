@@ -329,6 +329,7 @@ export const filesRouter = router({
       region: ENV.s3Region,
       endpoint: ENV.s3Endpoint,
       workerUrl: ENV.workerUrl ? "configured" : null,
+      version: APP_VERSION,
     };
   }),
 });
