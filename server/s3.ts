@@ -184,14 +184,14 @@ export async function calculateBucketSize() {
 
 export async function renameFile(oldKey: string, newKey: string) {
   const client = getClient();
-  const getCmd = new GetObjectCommand({ Bucket: ENV.s3Bucket, Key: oldKey });
-  const obj = await client.send(getCmd);
-  const putCmd = new PutObjectCommand({
+  const obj = await client.send(new GetObjectCommand({ Bucket: ENV.s3Bucket, Key: oldKey }));
+  const buffer = Buffer.from(await obj.Body!.transformToByteArray());
+  await client.send(new PutObjectCommand({
     Bucket: ENV.s3Bucket,
     Key: newKey,
-    Body: obj.Body,
+    Body: buffer,
     ContentType: obj.ContentType,
-  });
-  await client.send(putCmd);
+    ContentLength: buffer.byteLength,
+  }));
   await deleteFile(oldKey);
 }
