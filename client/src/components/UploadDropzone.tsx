@@ -17,7 +17,7 @@ interface UploadingFile {
 }
 
 const MAX_CONCURRENT_UPLOADS = 4;
-const MAX_RETRIES = 2;
+const MAX_RETRIES = 4;
 const RETRY_BASE_DELAY_MS = 800;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
