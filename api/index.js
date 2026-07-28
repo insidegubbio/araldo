@@ -268,6 +268,7 @@ var HttpError = class extends Error {
     this.statusCode = statusCode;
     this.name = "HttpError";
   }
+  statusCode;
 };
 var ForbiddenError = (msg) => new HttpError(403, msg);
 
@@ -616,117 +617,6 @@ var systemRouter = router({
   })
 });
 
-// package.json
-var package_default = {
-  name: "araldo",
-  version: "1.1.0",
-  type: "module",
-  license: "GPL-3.0-only",
-  scripts: {
-    dev: "NODE_ENV=development tsx watch server/_core/index.ts",
-    build: "vite build && esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist && mkdir -p api && esbuild server/_core/vercelHandler.ts --platform=node --packages=external --bundle --format=esm --outfile=api/index.js",
-    start: "NODE_ENV=production node dist/index.js",
-    check: "tsc --noEmit",
-    format: "prettier --write .",
-    test: "vitest run",
-    "db:push": "drizzle-kit generate && drizzle-kit migrate"
-  },
-  dependencies: {
-    "@aws-sdk/client-s3": "^3.693.0",
-    "@aws-sdk/s3-request-presigner": "^3.693.0",
-    "@hookform/resolvers": "^5.2.2",
-    "@neondatabase/serverless": "^0.10.4",
-    "@radix-ui/react-accordion": "^1.2.12",
-    "@radix-ui/react-alert-dialog": "^1.1.15",
-    "@radix-ui/react-aspect-ratio": "^1.1.7",
-    "@radix-ui/react-avatar": "^1.1.10",
-    "@radix-ui/react-checkbox": "^1.3.3",
-    "@radix-ui/react-collapsible": "^1.1.12",
-    "@radix-ui/react-context-menu": "^2.2.16",
-    "@radix-ui/react-dialog": "^1.1.15",
-    "@radix-ui/react-dropdown-menu": "^2.1.16",
-    "@radix-ui/react-hover-card": "^1.1.15",
-    "@radix-ui/react-label": "^2.1.7",
-    "@radix-ui/react-menubar": "^1.1.16",
-    "@radix-ui/react-navigation-menu": "^1.2.14",
-    "@radix-ui/react-popover": "^1.1.15",
-    "@radix-ui/react-progress": "^1.1.7",
-    "@radix-ui/react-radio-group": "^1.3.8",
-    "@radix-ui/react-scroll-area": "^1.2.10",
-    "@radix-ui/react-select": "^2.2.6",
-    "@radix-ui/react-separator": "^1.1.7",
-    "@radix-ui/react-slider": "^1.3.6",
-    "@radix-ui/react-slot": "^1.2.3",
-    "@radix-ui/react-switch": "^1.2.6",
-    "@radix-ui/react-tabs": "^1.1.13",
-    "@radix-ui/react-toggle": "^1.1.10",
-    "@radix-ui/react-toggle-group": "^1.1.11",
-    "@radix-ui/react-tooltip": "^1.2.8",
-    "@tanstack/react-query": "^5.90.2",
-    "@trpc/client": "^11.6.0",
-    "@trpc/react-query": "^11.6.0",
-    "@trpc/server": "^11.6.0",
-    axios: "^1.12.0",
-    "class-variance-authority": "^0.7.1",
-    clsx: "^2.1.1",
-    cmdk: "^1.1.1",
-    cookie: "^1.0.2",
-    "date-fns": "^4.1.0",
-    dotenv: "^17.2.2",
-    "drizzle-orm": "^0.44.5",
-    "embla-carousel-react": "^8.6.0",
-    express: "^4.21.2",
-    "framer-motion": "^12.23.22",
-    "input-otp": "^1.4.2",
-    jose: "6.1.0",
-    "lucide-react": "^0.453.0",
-    nanoid: "^5.1.5",
-    "next-themes": "^0.4.6",
-    react: "^19.2.1",
-    "react-day-picker": "^9.11.1",
-    "react-dom": "^19.2.1",
-    "react-hook-form": "^7.64.0",
-    "react-resizable-panels": "^3.0.6",
-    recharts: "^2.15.2",
-    sonner: "^2.0.7",
-    streamdown: "^1.4.0",
-    superjson: "^1.13.3",
-    "tailwind-merge": "^3.3.1",
-    "tailwindcss-animate": "^1.0.7",
-    vaul: "^1.1.2",
-    wouter: "^3.3.5",
-    zod: "^4.1.12"
-  },
-  devDependencies: {
-    "@builder.io/vite-plugin-jsx-loc": "^0.1.1",
-    "@tailwindcss/typography": "^0.5.15",
-    "@tailwindcss/vite": "^4.1.3",
-    "@types/express": "4.17.21",
-    "@types/google.maps": "^3.58.1",
-    "@types/node": "^24.7.0",
-    "@types/react": "^19.2.1",
-    "@types/react-dom": "^19.2.1",
-    "@vitejs/plugin-react": "^5.0.4",
-    add: "^2.0.6",
-    autoprefixer: "^10.4.20",
-    "drizzle-kit": "^0.31.4",
-    esbuild: "^0.25.0",
-    pnpm: "^10.15.1",
-    postcss: "^8.4.47",
-    prettier: "^3.6.2",
-    tailwindcss: "^4.1.14",
-    tsx: "^4.19.1",
-    "tw-animate-css": "^1.4.0",
-    typescript: "5.9.3",
-    vite: "^7.1.7",
-    vitest: "^2.1.4"
-  },
-  packageManager: "pnpm@10.15.1"
-};
-
-// server/version.ts
-var APP_VERSION = package_default.version;
-
 // server/s3.ts
 import {
   DeleteObjectCommand,
@@ -739,7 +629,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 function getClient() {
-  const config2 = {
+  const config = {
     region: ENV.s3Region,
     credentials: {
       accessKeyId: ENV.s3AccessKey,
@@ -750,10 +640,10 @@ function getClient() {
     responseChecksumValidation: "WHEN_REQUIRED"
   };
   if (ENV.s3Endpoint) {
-    config2.endpoint = ENV.s3Endpoint.startsWith("https://") ? ENV.s3Endpoint : `https://${ENV.s3Endpoint}`;
-    config2.forcePathStyle = true;
+    config.endpoint = ENV.s3Endpoint.startsWith("https://") ? ENV.s3Endpoint : `https://${ENV.s3Endpoint}`;
+    config.forcePathStyle = true;
   }
-  return new S3Client(config2);
+  return new S3Client(config);
 }
 async function listFiles(prefix = "", maxKeys = 1e3, continuationToken) {
   const client = getClient();
@@ -873,22 +763,21 @@ async function calculateBucketSize() {
 }
 async function renameFile(oldKey, newKey) {
   const client = getClient();
-  const getCmd = new GetObjectCommand({ Bucket: ENV.s3Bucket, Key: oldKey });
-  const obj = await client.send(getCmd);
-  const putCmd = new PutObjectCommand({
+  const obj = await client.send(new GetObjectCommand({ Bucket: ENV.s3Bucket, Key: oldKey }));
+  const buffer = Buffer.from(await obj.Body.transformToByteArray());
+  await client.send(new PutObjectCommand({
     Bucket: ENV.s3Bucket,
     Key: newKey,
-    Body: obj.Body,
-    ContentType: obj.ContentType
-  });
-  await client.send(putCmd);
+    Body: buffer,
+    ContentType: obj.ContentType,
+    ContentLength: buffer.byteLength
+  }));
   await deleteFile(oldKey);
 }
 
 // server/routers/files.ts
 import { PutObjectCommand as PutObjectCommand2 } from "@aws-sdk/client-s3";
 import { TRPCError as TRPCError3 } from "@trpc/server";
-import { nanoid } from "nanoid";
 import { z as z2 } from "zod";
 
 // server/worker.ts
@@ -968,7 +857,7 @@ var filesRouter = router({
     })
   ).mutation(async ({ input, ctx }) => {
     const safeName = input.filename.normalize("NFKD").replace(/[^\w.\- ]/g, "").trim().slice(0, 200) || "file";
-    const uniqueKey = input.folder ? `${input.folder}/${nanoid(8)}-${safeName}` : `${nanoid(8)}-${safeName}`;
+    const uniqueKey = input.folder ? `${input.folder}/${safeName}` : `${safeName}`;
     const url = await getUploadPresignedUrl(uniqueKey, input.contentType);
     await upsertFileMetadata({
       s3Key: uniqueKey,
@@ -1216,14 +1105,10 @@ function createApp() {
 }
 
 // server/_core/vercelHandler.ts
-var config = {
-  maxDuration: 30
-};
 var app = createApp();
 function handler(req, res) {
   return app(req, res);
 }
 export {
-  config,
   handler as default
 };
