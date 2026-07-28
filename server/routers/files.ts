@@ -102,9 +102,10 @@ export const filesRouter = router({
       //keep the original filename readable in the S3 key itself
       const safeName = input.filename
         .normalize("NFKD")
-        .replace(/[^\w.\- ]/g, "")
+        .replace(/[^\w.\- ]/g, "_")
+        .replace(/^\.+/, "")
         .trim()
-        .slice(0, 200) || "file";
+        .slice(0, 200) || `file_${Date.now()}`;
       const uniqueKey = input.folder
         ? `${input.folder}/${safeName}`
         : `${safeName}`;
