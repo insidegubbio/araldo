@@ -7,6 +7,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import Dashboard from "./pages/Dashboard";
 import FilePreview from "./pages/FilePreview";
 import Login from "./pages/Login";
+import ShareReceive from "./pages/ShareReceive";
 
 function Router() {
   return (
@@ -14,6 +15,7 @@ function Router() {
       <Route path="/" component={Dashboard} />
       <Route path="/login" component={Login} />
       <Route path="/preview/:key*" component={FilePreview} />
+      <Route path="/share-receive" component={ShareReceive} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
