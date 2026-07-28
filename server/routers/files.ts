@@ -3,6 +3,7 @@ import { getClient } from "../s3";
 import { calculateBucketSize, renameFile } from "../s3";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { TRPCError } from "@trpc/server";
+import { APP_VERSION } from "../version";
 import { z } from "zod";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import {
