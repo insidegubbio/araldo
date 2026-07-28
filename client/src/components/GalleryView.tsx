@@ -24,9 +24,11 @@ export function GalleryView({ items, isLoading }: GalleryViewProps) {
 
   const mediaItems = items.filter((f) => {
     const mime = f.mimeType ?? "";
-    return mime.startsWith("image/") || mime.startsWith("video/");
+    if (mime.startsWith("image/") || mime.startsWith("video/")) return true;
+    const ext = f.filename.split(".").pop()?.toLowerCase() ?? "";
+    return ["jpg","jpeg","png","gif","webp","heic","heif","mp4","mov"].includes(ext);
   });
-
+  
   const handleDownload = async (key: string, filename: string) => {
     try {
       const { downloadUrl } = await getDownloadUrl.mutateAsync({ key });
