@@ -15,6 +15,10 @@ export function createApp(): Express {
   registerStorageProxy(app);
   registerOAuthRoutes(app);
 
+  app.post("/share-target", express.urlencoded({ extended: true }), (_req, res) => {
+    res.redirect(303, "/#/share-receive");
+  });
+
   app.use(
     "/api/trpc",
     createExpressMiddleware({
