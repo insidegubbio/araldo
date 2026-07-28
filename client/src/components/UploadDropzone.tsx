@@ -16,6 +16,12 @@ interface UploadingFile {
   status: "pending" | "uploading" | "done" | "error";
 }
 
+const MAX_CONCURRENT_UPLOADS = 4;
+const MAX_RETRIES = 2;
+const RETRY_BASE_DELAY_MS = 800;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export function UploadDropzone({ onUploaded, folder = "" }: UploadDropzoneProps) {
   const [dragging, setDragging] = useState(false);
   const [uploads, setUploads] = useState<UploadingFile[]>([]);
@@ -26,41 +32,72 @@ export function UploadDropzone({ onUploaded, folder = "" }: UploadDropzoneProps)
   const updateUpload = (id: string, patch: Partial<UploadingFile>) =>
     setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, ...patch } : u)));
 
+  const uploadOnce = async (file: File, id: string) => {
+    const { uploadUrl, key } = await getUploadUrl.mutateAsync({
+      filename: file.name,
+      contentType: file.type || "application/octet-stream",
+      folder,
+    });
+    updateUpload(id, { status: "uploading", progress: 0 });
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", uploadUrl);
+      xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable)
+          updateUpload(id, { progress: Math.round((e.loaded / e.total) * 100) });
+      };
+      xhr.onload = () => (xhr.status < 300 ? resolve() : reject(new Error(`HTTP ${xhr.status}`)));
+      xhr.onerror = () => reject(new Error("network error"));
+      xhr.send(file);
+    });
+    await confirmUpload.mutateAsync({ key, size: file.size });
+  };
+
   const uploadFile = async (file: File) => {
     const id = crypto.randomUUID();
     setUploads((prev) => [...prev, { id, name: file.name, progress: 0, status: "pending" }]);
-    try {
-      const { uploadUrl, key } = await getUploadUrl.mutateAsync({
-        filename: file.name,
-        contentType: file.type || "application/octet-stream",
-        folder,
-      });
-      updateUpload(id, { status: "uploading" });
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("PUT", uploadUrl);
-        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable)
-            updateUpload(id, { progress: Math.round((e.loaded / e.total) * 100) });
-        };
-        xhr.onload = () => (xhr.status < 300 ? resolve() : reject(new Error(`HTTP ${xhr.status}`)));
-        xhr.onerror = () => reject(new Error("network error"));
-        xhr.send(file);
-      });
-      await confirmUpload.mutateAsync({ key, size: file.size });
-      updateUpload(id, { status: "done", progress: 100 });
-      toast.success(`${file.name} caricato`);
-      onUploaded?.();
-    } catch (err) {
-      updateUpload(id, { status: "error" });
-      toast.error(`Errore caricando ${file.name}`);
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        await uploadOnce(file, id);
+        updateUpload(id, { status: "done", progress: 100 });
+        toast.success(`${file.name} caricato`);
+        onUploaded?.();
+        return;
+      } catch (err) {
+        const isLastAttempt = attempt === MAX_RETRIES;
+        if (isLastAttempt) {
+          updateUpload(id, { status: "error" });
+          toast.error(`Errore caricando ${file.name} (dopo ${MAX_RETRIES + 1} tentativi)`);
+        } else {
+          // esponential backoff: 0.8s, 1.6s, ...
+          await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
+        }
+      }
     }
   };
 
+  const runQueue = async (files: File[]) => {
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < files.length) {
+        const file = files[cursor];
+        cursor += 1;
+        await uploadFile(file);
+      }
+    };
+    const workers = Array.from({ length: Math.min(MAX_CONCURRENT_UPLOADS, files.length) }, worker);
+    await Promise.all(workers);
+  };
+
   const handleFiles = (files: FileList | null) => {
-    if (!files) return;
-    Array.from(files).forEach(uploadFile);
+    if (!files || files.length === 0) return;
+    const fileArray = Array.from(files);
+    if (fileArray.length > 20) {
+      toast.info(`Carico ${fileArray.length} file, ${MAX_CONCURRENT_UPLOADS} alla volta...`);
+    }
+    runQueue(fileArray);
   };
 
   return (
@@ -86,8 +123,16 @@ export function UploadDropzone({ onUploaded, folder = "" }: UploadDropzoneProps)
         />
       </div>
 
+      {uploads.length > 5 && (
+        <p className="text-xs text-muted-foreground">
+          {uploads.filter((u) => u.status === "done").length} / {uploads.length} completati
+          {uploads.some((u) => u.status === "error") &&
+            ` — ${uploads.filter((u) => u.status === "error").length} falliti`}
+        </p>
+      )}
+
       {uploads.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
           {uploads.map((u) => (
             <div key={u.id} className="flex items-center gap-3 p-3 border border-border rounded-lg">
               <div className="flex-1 min-w-0">
