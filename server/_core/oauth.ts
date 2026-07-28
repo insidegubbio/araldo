@@ -1,11 +1,19 @@
 import { COOKIE_NAME, ONE_YEAR_MS, OAUTH_STATE_COOKIE } from "@shared/const";
 import { parse as parseCookieHeader } from "cookie";
 import type { Express, Request, Response } from "express";
+import rateLimit from "express-rate-limit";
 import * as db from "../db";
 import { getSessionCookieOptions } from "./cookies";
 import { ENV } from "./env";
 import { buildGithubAuthorizeUrl, exchangeGithubCode, getGithubUser } from "./github";
 import { sdk } from "./sdk";
+
+const oauthLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 function getQueryParam(req: Request, key: string): string | undefined {
   const value = req.query[key];
@@ -21,7 +29,7 @@ function getRedirectUri(req: Request): string {
 }
 
 export function registerOAuthRoutes(app: Express) {
-  app.get("/api/oauth/github/start", (req: Request, res: Response) => {
+  app.get("/api/oauth/github/start", oauthLimiter, (req: Request, res: Response) => {
     const nonce = crypto.randomUUID();
     res.cookie(OAUTH_STATE_COOKIE, nonce, {
       path: "/",
@@ -34,7 +42,7 @@ export function registerOAuthRoutes(app: Express) {
     res.redirect(302, buildGithubAuthorizeUrl(redirectUri, nonce));
   });
 
-  app.get("/api/oauth/callback", async (req: Request, res: Response) => {
+  app.get("/api/oauth/callback", oauthLimiter, async (req: Request, res: Response) => {
     const code = getQueryParam(req, "code");
     const state = getQueryParam(req, "state");
 
@@ -78,7 +86,13 @@ export function registerOAuthRoutes(app: Express) {
       });
 
       const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+      res.cookie(COOKIE_NAME, sessionToken, {
+        path: cookieOptions.path,
+        sameSite: cookieOptions.sameSite,
+        maxAge: ONE_YEAR_MS,
+        httpOnly: true,
+        secure: true,
+      });
 
       res.redirect(302, "/");
     } catch (error) {
