@@ -2,7 +2,7 @@ import { FileIcon } from "./FileIcon";
 import { trpc } from "@/lib/trpc";
 import { Loader2, Download, Eye } from "lucide-react";
 import { useLocation } from "wouter";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 
 interface GalleryItem {
   s3Key: string;
@@ -21,6 +21,8 @@ export function GalleryView({ items, isLoading }: GalleryViewProps) {
   const [, navigate] = useLocation();
   const getDownloadUrl = trpc.files.getDownloadUrl.useMutation();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [thumbUrls, setThumbUrls] = useState<Record<string, string>>({});
+  const requestedKeys = useRef<Set<string>>(new Set());
 
   const mediaItems = items.filter((f) => {
     const mime = f.mimeType ?? "";
@@ -28,6 +30,25 @@ export function GalleryView({ items, isLoading }: GalleryViewProps) {
     const ext = f.filename.split(".").pop()?.toLowerCase() ?? "";
     return ["jpg","jpeg","png","gif","webp","heic","heif","mp4","mov"].includes(ext);
   });
+
+  // getDownloadUrl e' una mutation tRPC (solo POST): non puo' essere usata
+  // direttamente come <img src>. Recuperiamo l'URL presigned per ogni
+  // thumbnail una sola volta e lo mettiamo in cache localmente.
+  useEffect(() => {
+    const imageItems = mediaItems.filter((item) => item.mimeType?.startsWith("image/"));
+    imageItems.forEach((item) => {
+      if (requestedKeys.current.has(item.s3Key) || thumbUrls[item.s3Key]) return;
+      requestedKeys.current.add(item.s3Key);
+      getDownloadUrl.mutateAsync({ key: item.s3Key })
+        .then(({ downloadUrl }) => {
+          setThumbUrls((prev) => ({ ...prev, [item.s3Key]: downloadUrl }));
+        })
+        .catch(() => {
+          requestedKeys.current.delete(item.s3Key);
+        });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items]);
   
   const handleDownload = async (key: string, filename: string) => {
     try {
@@ -69,14 +90,20 @@ export function GalleryView({ items, isLoading }: GalleryViewProps) {
             onClick={() => setSelectedKey(item.s3Key)}
           >
             {isImage && (
-              <img
-                src={`/api/trpc/files.getDownloadUrl?key=${encodeURIComponent(item.s3Key)}`}
-                alt={item.filename}
-                className="w-full h-full object-cover"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect fill='%23f0f0f0' width='100' height='100'/%3E%3C/svg%3E";
-                }}
-              />
+              thumbUrls[item.s3Key] ? (
+                <img
+                  src={thumbUrls[item.s3Key]}
+                  alt={item.filename}
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect fill='%23f0f0f0' width='100' height='100'/%3E%3C/svg%3E";
+                  }}
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-muted">
+                  <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                </div>
+              )
             )}
             {isVideo && (
               <div className="w-full h-full flex items-center justify-center bg-muted">
