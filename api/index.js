@@ -1202,6 +1202,9 @@ function createApp() {
   app2.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app2);
   registerOAuthRoutes(app2);
+  app2.post("/share-target", express.urlencoded({ extended: true }), (_req, res) => {
+    res.redirect(303, "/#/share-receive");
+  });
   app2.use(
     "/api/trpc",
     createExpressMiddleware({
