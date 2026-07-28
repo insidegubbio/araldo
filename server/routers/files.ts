@@ -50,6 +50,8 @@ export const filesRouter = router({
         };
       });
 
+      const dbKeys = new Set(dbResult.items.map((m) => m.s3Key));
+
       const extMimeMap: Record<string, string> = {
         jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
         gif: "image/gif", webp: "image/webp", heic: "image/heic",
@@ -138,7 +140,28 @@ export const filesRouter = router({
       }
       return { ok: true };
     }),
-
+  
+  getUploadUrls: protectedProcedure
+    .input(z.object({
+      files: z.array(z.object({
+        filename: z.string(),
+        contentType: z.string(),
+      })).max(50),
+      folder: z.string().optional().default(""),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const results = await Promise.all(input.files.map(async (f) => {
+        const safeName = f.filename.normalize("NFKD")
+          .replace(/[^\w.\- ]/g, "_").trim().slice(0, 200) || `file_${Date.now()}`;
+        const key = input.folder ? `${input.folder}/${Date.now()}-${safeName}` : `${Date.now()}-${safeName}`;
+        const url = await getUploadPresignedUrl(key, f.contentType);
+        await upsertFileMetadata({ s3Key: key, filename: f.filename, size: 0,
+          mimeType: f.contentType, uploadedBy: ctx.user.id, uploadedAt: new Date() });
+        return { uploadUrl: url, key };
+      }));
+      return results;
+    }),
+  
   getDownloadUrl: protectedProcedure
     .input(z.object({ key: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
