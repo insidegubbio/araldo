@@ -1,6 +1,7 @@
 // server/_core/app.ts
 import "dotenv/config";
 import express from "express";
+import rateLimit2 from "express-rate-limit";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 
 // shared/const.ts
@@ -12,6 +13,7 @@ var OAUTH_STATE_COOKIE = "__Host-oauth_state";
 
 // server/_core/oauth.ts
 import { parse as parseCookieHeader2 } from "cookie";
+import rateLimit from "express-rate-limit";
 
 // server/db.ts
 import { and, desc, eq, like, or, sql } from "drizzle-orm";
@@ -179,19 +181,12 @@ async function getTopAccessedFiles(limit = 10) {
 }
 
 // server/_core/cookies.ts
-function isSecureRequest(req) {
-  if (req.protocol === "https") return true;
-  const forwardedProto = req.headers["x-forwarded-proto"];
-  if (!forwardedProto) return false;
-  const protoList = Array.isArray(forwardedProto) ? forwardedProto : forwardedProto.split(",");
-  return protoList.some((proto) => proto.trim().toLowerCase() === "https");
-}
-function getSessionCookieOptions(req) {
+function getSessionCookieOptions(_req) {
   return {
     httpOnly: true,
     path: "/",
     sameSite: "none",
-    secure: isSecureRequest(req)
+    secure: true
   };
 }
 
@@ -361,6 +356,12 @@ var SDKServer = class {
 var sdk = new SDKServer();
 
 // server/_core/oauth.ts
+var oauthLimiter = rateLimit({
+  windowMs: 15 * 60 * 1e3,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false
+});
 function getQueryParam(req, key) {
   const value = req.query[key];
   return typeof value === "string" ? value : void 0;
@@ -373,7 +374,7 @@ function getRedirectUri(req) {
   return `${protocol}://${host}/api/oauth/callback`;
 }
 function registerOAuthRoutes(app2) {
-  app2.get("/api/oauth/github/start", (req, res) => {
+  app2.get("/api/oauth/github/start", oauthLimiter, (req, res) => {
     const nonce = crypto.randomUUID();
     res.cookie(OAUTH_STATE_COOKIE, nonce, {
       path: "/",
@@ -385,7 +386,7 @@ function registerOAuthRoutes(app2) {
     const redirectUri = getRedirectUri(req);
     res.redirect(302, buildGithubAuthorizeUrl(redirectUri, nonce));
   });
-  app2.get("/api/oauth/callback", async (req, res) => {
+  app2.get("/api/oauth/callback", oauthLimiter, async (req, res) => {
     const code = getQueryParam(req, "code");
     const state = getQueryParam(req, "state");
     if (!code || !state) {
@@ -419,7 +420,13 @@ function registerOAuthRoutes(app2) {
         expiresInMs: ONE_YEAR_MS
       });
       const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+      res.cookie(COOKIE_NAME, sessionToken, {
+        path: cookieOptions.path,
+        sameSite: cookieOptions.sameSite,
+        maxAge: ONE_YEAR_MS,
+        httpOnly: true,
+        secure: true
+      });
       res.redirect(302, "/");
     } catch (error) {
       console.error("[OAuth] GitHub callback failed", error);
@@ -1085,15 +1092,19 @@ async function createContext(opts) {
 }
 
 // server/_core/app.ts
+var globalLimiter = rateLimit2({
+  windowMs: 15 * 60 * 1e3,
+  limit: 300,
+  standardHeaders: true,
+  legacyHeaders: false
+});
 function createApp() {
   const app2 = express();
+  app2.use(globalLimiter);
   app2.use(express.json({ limit: "50mb" }));
   app2.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app2);
   registerOAuthRoutes(app2);
-  app2.post("/share-target", express.urlencoded({ extended: true }), (_req, res) => {
-    res.redirect(303, "/#/share-receive");
-  });
   app2.use(
     "/api/trpc",
     createExpressMiddleware({
