@@ -50,26 +50,33 @@ export const filesRouter = router({
         };
       });
 
-      // include s3 files not yet in db
-      const dbKeys = new Set(dbResult.items.map((m) => m.s3Key));
+      const extMimeMap: Record<string, string> = {
+        jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
+        gif: "image/gif", webp: "image/webp", heic: "image/heic",
+        heif: "image/heif", mp4: "video/mp4", mov: "video/quicktime",
+      };
+      
       const s3Only = s3Result.items
         .filter((f) => !dbKeys.has(f.key))
         .filter((f) => !input.search || f.filename.toLowerCase().includes(input.search.toLowerCase()))
-        .map((f) => ({
-          id: -1,
-          s3Key: f.key,
-          filename: f.filename,
-          size: f.size,
-          mimeType: null,
-          uploadedBy: null,
-          uploadedAt: f.lastModified,
-          lastAccessed: null,
-          accessCount: 0,
-          workerTracked: false,
-          lastModified: f.lastModified,
-          etag: f.etag,
-          existsInS3: true,
-        }));
+        .map((f) => {
+          const ext = f.filename.split(".").pop()?.toLowerCase() ?? "";
+          return {
+            id: -1,
+            s3Key: f.key,
+            filename: f.filename,
+            size: f.size,
+            mimeType: extMimeMap[ext] ?? null,
+            uploadedBy: null,
+            uploadedAt: f.lastModified,
+            lastAccessed: null,
+            accessCount: 0,
+            workerTracked: false,
+            lastModified: f.lastModified,
+            etag: f.etag,
+            existsInS3: true,
+          };
+        });
 
       const allItems = [...enriched, ...s3Only];
       return {
