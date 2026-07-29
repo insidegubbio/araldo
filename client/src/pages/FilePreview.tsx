@@ -8,12 +8,21 @@ import { useEffect, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 
+function buildWorkerUrl(workerBase: string, key: string): string {
+  const base = workerBase.replace(/\/+$/, "");
+  const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+  return `${base}/${encodedKey}`;
+}
+
 export default function FilePreview() {
   const { isAuthenticated, loading } = useAuth();
   const [, navigate] = useLocation();
   const params = useParams<{ key: string }>();
   const key = decodeURIComponent(params.key ?? "");
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+
+  const settingsQuery = trpc.system.settings.useQuery();
+  const workerUrl = settingsQuery.data?.workerUrl ?? null;
   const getDownloadUrl = trpc.files.getDownloadUrl.useMutation();
 
   useEffect(() => {
@@ -22,15 +31,21 @@ export default function FilePreview() {
 
   useEffect(() => {
     if (!key || !isAuthenticated) return;
-    getDownloadUrl.mutateAsync({ key }).then((r) => setDownloadUrl(r.downloadUrl)).catch(() => {
-      toast.error("Impossibile ottenere il link di download");
-    });
-  }, [key, isAuthenticated]);
+
+    if (workerUrl) {
+      setDownloadUrl(buildWorkerUrl(workerUrl, key));
+    } else if (workerUrl === null && settingsQuery.isFetched) {
+      getDownloadUrl.mutateAsync({ key }).then((r) => setDownloadUrl(r.downloadUrl)).catch(() => {
+        toast.error("Impossibile ottenere il link di download");
+      });
+    }
+  }, [key, isAuthenticated, workerUrl, settingsQuery.isFetched]);
 
   const ext = key.split(".").pop()?.toLowerCase() ?? "";
   const isImage = ["jpg", "jpeg", "png", "gif", "webp", "avif", "svg"].includes(ext);
   const isPdf = ext === "pdf";
   const isText = ["txt", "md", "csv", "log", "json", "js", "ts", "html", "css"].includes(ext);
+  const isPending = !downloadUrl && (!settingsQuery.isFetched || getDownloadUrl.isPending);
 
   if (loading) {
     return (
@@ -64,7 +79,7 @@ export default function FilePreview() {
           )}
         </div>
 
-        {getDownloadUrl.isPending && (
+        {isPending && (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
           </div>
