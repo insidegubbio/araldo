@@ -891,10 +891,6 @@ var filesRouter = router({
     return { ok: true };
   }),
   getDownloadUrl: protectedProcedure.input(z2.object({ key: z2.string().min(1) })).mutation(async ({ input, ctx }) => {
-    // Se il Worker Cloudflare è configurato, usa quello direttamente:
-    // - zero egress da B2 (Bandwidth Alliance)
-    // - URL permanente, nessun presigned da generare
-    // - il Worker firma internamente con AWS4
     let url;
     if (ENV.workerUrl) {
       const base = ENV.workerUrl.replace(/\/+$/, "");
