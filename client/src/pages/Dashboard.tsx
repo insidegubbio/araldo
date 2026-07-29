@@ -176,6 +176,176 @@ export function GalleryView({ items, isLoading, currentPrefix = "", onMoved }: G
         )}
       </div>
 
+            <BottomNav onUploadClick={() => setShowUpload((v) => !v)} />
+      <FloatingTabBar activeTab={activeTab} onTabChange={setActiveTab} />
+
+      <AlertDialog open={!!deleteKey} onOpenChange={(o) => !o && setDeleteKey(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Elimina file</AlertDialogTitle>
+            <AlertDialogDescription>
+              Questa azione è irreversibile. Il file verrà eliminato definitivamente dal bucket S3.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annulla</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteKey && deleteMutation.mutate({ key: deleteKey })}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Elimina"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkDeleteConfirm} onOpenChange={setBulkDeleteConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Elimina {selectedKeys.size} file</AlertDialogTitle>
+            <AlertDialogDescription>
+              Questa azione è irreversibile. I file selezionati verranno eliminati definitivamente dal bucket S3.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annulla</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteManyMutation.mutate({ keys: Array.from(selectedKeys) })}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteManyMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Elimina"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={showNewFolder} onOpenChange={setShowNewFolder}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Nuova cartella</DialogTitle>
+          </DialogHeader>
+          <input
+            type="text"
+            value={newFolderName}
+            onChange={(e) => setNewFolderName(e.target.value)}
+            placeholder="Nome cartella"
+            className="w-full px-3 py-2 border border-border rounded-lg text-sm"
+            onKeyDown={(e) => e.key === "Enter" && handleCreateFolder()}
+          />
+          <DialogFooter>
+            <button
+              onClick={() => setShowNewFolder(false)}
+              className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors"
+            >
+              Annulla
+            </button>
+            <button
+              onClick={handleCreateFolder}
+              disabled={mkdirMutation.isPending}
+              className="px-4 py-2 text-sm bg-foreground text-background rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60"
+            >
+              {mkdirMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                "Crea"
+              )}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!renameTarget} onOpenChange={(o) => !o && setRenameTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rinomina file</DialogTitle>
+          </DialogHeader>
+          <input
+            type="text"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            placeholder="Nuovo nome file"
+            className="w-full px-3 py-2 border border-border rounded-lg text-sm"
+            onKeyDown={(e) => e.key === "Enter" && handleRename()}
+            autoFocus
+          />
+          <DialogFooter>
+            <button
+              onClick={() => setRenameTarget(null)}
+              className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors"
+            >
+              Annulla
+            </button>
+            <button
+              onClick={handleRename}
+              disabled={renameMutation.isPending}
+              className="px-4 py-2 text-sm bg-foreground text-background rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60"
+            >
+              {renameMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                "Rinomina"
+              )}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={!!folderDeleteConfirm} onOpenChange={(o) => !o && setFolderDeleteConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Elimina cartella</AlertDialogTitle>
+            <AlertDialogDescription>
+              Questa azione è irreversibile. La cartella e tutto il suo contenuto verranno eliminati definitivamente dal bucket S3.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annulla</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => folderDeleteConfirm && deleteFolderMutation.mutate({ prefix: folderDeleteConfirm })}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteFolderMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Elimina"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={!!folderRenameTarget} onOpenChange={(o) => !o && setFolderRenameTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rinomina cartella</DialogTitle>
+          </DialogHeader>
+          <input
+            type="text"
+            value={folderRenameValue}
+            onChange={(e) => setFolderRenameValue(e.target.value)}
+            placeholder="Nuovo nome cartella"
+            className="w-full px-3 py-2 border border-border rounded-lg text-sm"
+            onKeyDown={(e) => e.key === "Enter" && handleRenameFolder()}
+            autoFocus
+          />
+          <DialogFooter>
+            <button
+              onClick={() => setFolderRenameTarget(null)}
+              className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors"
+            >
+              Annulla
+            </button>
+            <button
+              onClick={handleRenameFolder}
+              disabled={renameFolderMutation.isPending}
+              className="px-4 py-2 text-sm bg-foreground text-background rounded-lg hover:opacity-90 transition-opacity disabled:opacity-60"
+            >
+              {renameFolderMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                "Rinomina"
+              )}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+
         {activeTab === "gallery" && (
           <GalleryView
             items={data?.items ?? []}
