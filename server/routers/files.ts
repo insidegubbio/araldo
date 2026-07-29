@@ -3,6 +3,7 @@ import { getClient } from "../s3";
 import { calculateBucketSize, renameFile } from "../s3";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { TRPCError } from "@trpc/server";
+import { APP_VERSION } from "../version";
 import { z } from "zod";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import {
@@ -49,26 +50,35 @@ export const filesRouter = router({
         };
       });
 
-      // include s3 files not yet in db
       const dbKeys = new Set(dbResult.items.map((m) => m.s3Key));
+
+      const extMimeMap: Record<string, string> = {
+        jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
+        gif: "image/gif", webp: "image/webp", heic: "image/heic",
+        heif: "image/heif", mp4: "video/mp4", mov: "video/quicktime",
+      };
+      
       const s3Only = s3Result.items
         .filter((f) => !dbKeys.has(f.key))
         .filter((f) => !input.search || f.filename.toLowerCase().includes(input.search.toLowerCase()))
-        .map((f) => ({
-          id: -1,
-          s3Key: f.key,
-          filename: f.filename,
-          size: f.size,
-          mimeType: null,
-          uploadedBy: null,
-          uploadedAt: f.lastModified,
-          lastAccessed: null,
-          accessCount: 0,
-          workerTracked: false,
-          lastModified: f.lastModified,
-          etag: f.etag,
-          existsInS3: true,
-        }));
+        .map((f) => {
+          const ext = f.filename.split(".").pop()?.toLowerCase() ?? "";
+          return {
+            id: -1,
+            s3Key: f.key,
+            filename: f.filename,
+            size: f.size,
+            mimeType: extMimeMap[ext] ?? null,
+            uploadedBy: null,
+            uploadedAt: f.lastModified,
+            lastAccessed: null,
+            accessCount: 0,
+            workerTracked: false,
+            lastModified: f.lastModified,
+            etag: f.etag,
+            existsInS3: true,
+          };
+        });
 
       const allItems = [...enriched, ...s3Only];
       return {
@@ -94,9 +104,10 @@ export const filesRouter = router({
       //keep the original filename readable in the S3 key itself
       const safeName = input.filename
         .normalize("NFKD")
-        .replace(/[^\w.\- ]/g, "")
+        .replace(/[^\w.\- ]/g, "_")
+        .replace(/^\.+/, "")
         .trim()
-        .slice(0, 200) || "file";
+        .slice(0, 200) || `file_${Date.now()}`;
       const uniqueKey = input.folder
         ? `${input.folder}/${safeName}`
         : `${safeName}`;
@@ -129,7 +140,28 @@ export const filesRouter = router({
       }
       return { ok: true };
     }),
-
+  
+  getUploadUrls: protectedProcedure
+    .input(z.object({
+      files: z.array(z.object({
+        filename: z.string(),
+        contentType: z.string(),
+      })).max(50),
+      folder: z.string().optional().default(""),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const results = await Promise.all(input.files.map(async (f) => {
+        const safeName = f.filename.normalize("NFKD")
+          .replace(/[^\w.\- ]/g, "_").trim().slice(0, 200) || `file_${Date.now()}`;
+        const key = input.folder ? `${input.folder}/${Date.now()}-${safeName}` : `${Date.now()}-${safeName}`;
+        const url = await getUploadPresignedUrl(key, f.contentType);
+        await upsertFileMetadata({ s3Key: key, filename: f.filename, size: 0,
+          mimeType: f.contentType, uploadedBy: ctx.user.id, uploadedAt: new Date() });
+        return { uploadUrl: url, key };
+      }));
+      return results;
+    }),
+  
   getDownloadUrl: protectedProcedure
     .input(z.object({ key: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
@@ -244,6 +276,56 @@ export const filesRouter = router({
         timestamp: new Date().toISOString(),
       });
       return { ok: true, newKey };
+    }),
+
+  listFolders: protectedProcedure
+    .input(z.object({ prefix: z.string().optional().default("") }))
+    .query(async ({ input }) => {
+      const result = await listFiles(input.prefix, 1000);
+      return { prefix: input.prefix, folders: result.folders };
+    }),
+
+  moveMany: protectedProcedure
+    .input(
+      z.object({
+        keys: z.array(z.string().min(1)).min(1).max(500),
+        destinationPrefix: z.string().optional().default(""),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const dest =
+        input.destinationPrefix && !input.destinationPrefix.endsWith("/")
+          ? `${input.destinationPrefix}/`
+          : input.destinationPrefix;
+
+      const results = await Promise.allSettled(
+        input.keys.map(async (oldKey) => {
+          const basename = oldKey.split("/").pop() ?? oldKey;
+          const newKey = `${dest}${basename}`;
+          if (newKey === oldKey) return;
+          const oldMeta = await getFileMetadata(oldKey);
+          await renameFile(oldKey, newKey);
+          await deleteFileMetadata(oldKey);
+          await upsertFileMetadata({
+            s3Key: newKey,
+            filename: oldMeta?.filename ?? basename,
+            size: oldMeta?.size ?? 0,
+            mimeType: oldMeta?.mimeType ?? null,
+            uploadedBy: oldMeta?.uploadedBy ?? ctx.user.id,
+            uploadedAt: oldMeta?.uploadedAt ?? new Date(),
+          });
+          await notifyWorker({
+            key: newKey,
+            filename: basename,
+            action: "upload",
+            userId: ctx.user.id,
+            timestamp: new Date().toISOString(),
+          });
+        })
+      );
+      const moved = results.filter((r) => r.status === "fulfilled").length;
+      const failed = input.keys.filter((_, i) => results[i].status === "rejected");
+      return { moved, failed };
     }),
 
   deleteFolder: protectedProcedure
