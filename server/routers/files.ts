@@ -278,6 +278,56 @@ export const filesRouter = router({
       return { ok: true, newKey };
     }),
 
+  listFolders: protectedProcedure
+    .input(z.object({ prefix: z.string().optional().default("") }))
+    .query(async ({ input }) => {
+      const result = await listFiles(input.prefix, 1000);
+      return { prefix: input.prefix, folders: result.folders };
+    }),
+
+  moveMany: protectedProcedure
+    .input(
+      z.object({
+        keys: z.array(z.string().min(1)).min(1).max(500),
+        destinationPrefix: z.string().optional().default(""),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const dest =
+        input.destinationPrefix && !input.destinationPrefix.endsWith("/")
+          ? `${input.destinationPrefix}/`
+          : input.destinationPrefix;
+
+      const results = await Promise.allSettled(
+        input.keys.map(async (oldKey) => {
+          const basename = oldKey.split("/").pop() ?? oldKey;
+          const newKey = `${dest}${basename}`;
+          if (newKey === oldKey) return;
+          const oldMeta = await getFileMetadata(oldKey);
+          await renameFile(oldKey, newKey);
+          await deleteFileMetadata(oldKey);
+          await upsertFileMetadata({
+            s3Key: newKey,
+            filename: oldMeta?.filename ?? basename,
+            size: oldMeta?.size ?? 0,
+            mimeType: oldMeta?.mimeType ?? null,
+            uploadedBy: oldMeta?.uploadedBy ?? ctx.user.id,
+            uploadedAt: oldMeta?.uploadedAt ?? new Date(),
+          });
+          await notifyWorker({
+            key: newKey,
+            filename: basename,
+            action: "upload",
+            userId: ctx.user.id,
+            timestamp: new Date().toISOString(),
+          });
+        })
+      );
+      const moved = results.filter((r) => r.status === "fulfilled").length;
+      const failed = input.keys.filter((_, i) => results[i].status === "rejected");
+      return { moved, failed };
+    }),
+
   deleteFolder: protectedProcedure
     .input(z.object({ prefix: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
