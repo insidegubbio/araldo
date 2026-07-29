@@ -187,7 +187,6 @@ export default function Dashboard() {
     const files = data?.items?.filter((f) => selectedKeys.has(f.s3Key)) ?? [];
     for (const file of files) {
       await handleDownload(file.s3Key, file.filename);
-      // piccola pausa per evitare che il browser blocchi download multipli simultanei
       await new Promise((r) => setTimeout(r, 200));
     }
   };
@@ -543,7 +542,14 @@ export default function Dashboard() {
           </>
         )}
 
-        {activeTab === "gallery" && <GalleryView items={data?.items ?? []} isLoading={isLoading} />}
+        {activeTab === "gallery" && (
+          <GalleryView
+            items={data?.items ?? []}
+            isLoading={isLoading}
+            currentPrefix={currentPrefix}
+            onMoved={() => utils.files.list.invalidate()}
+          />
+        )}
 
         {activeTab === "analytics" && <AnalyticsView />}
 
