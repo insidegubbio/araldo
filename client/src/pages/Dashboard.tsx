@@ -104,7 +104,7 @@ export default function Dashboard() {
     { search: debouncedSearch, page, pageSize, prefix: currentPrefix },
     { enabled: isAuthenticated, refetchOnWindowFocus: false }
   );
-  const settingsQuery = trpc.system.settings.useQuery();
+  const settingsQuery = trpc.files.settings.useQuery();
   const workerUrl = settingsQuery.data?.workerUrl ?? null;
   const getDownloadUrl = trpc.files.getDownloadUrl.useMutation();
   const deleteMutation = trpc.files.delete.useMutation({
