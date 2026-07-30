@@ -1,4 +1,5 @@
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -161,6 +162,34 @@ export async function headFile(key: string) {
   return client.send(cmd);
 }
 
+export async function fileExists(key: string): Promise<boolean> {
+  try {
+    await headFile(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function getObjectBuffer(key: string): Promise<Buffer> {
+  const client = getClient();
+  const obj = await client.send(new GetObjectCommand({ Bucket: ENV.s3Bucket, Key: key }));
+  return Buffer.from(await obj.Body!.transformToByteArray());
+}
+
+export async function uploadBuffer(key: string, buffer: Buffer, contentType: string) {
+  const client = getClient();
+  await client.send(
+    new PutObjectCommand({
+      Bucket: ENV.s3Bucket,
+      Key: key,
+      Body: buffer,
+      ContentType: contentType,
+      ContentLength: buffer.byteLength,
+    })
+  );
+}
+
 export async function calculateBucketSize() {
   const client = getClient();
   let totalSize = 0;
@@ -184,14 +213,10 @@ export async function calculateBucketSize() {
 
 export async function renameFile(oldKey: string, newKey: string) {
   const client = getClient();
-  const obj = await client.send(new GetObjectCommand({ Bucket: ENV.s3Bucket, Key: oldKey }));
-  const buffer = Buffer.from(await obj.Body!.transformToByteArray());
-  await client.send(new PutObjectCommand({
+  await client.send(new CopyObjectCommand({
     Bucket: ENV.s3Bucket,
+    CopySource: `${ENV.s3Bucket}/${oldKey.split("/").map(encodeURIComponent).join("/")}`,
     Key: newKey,
-    Body: buffer,
-    ContentType: obj.ContentType,
-    ContentLength: buffer.byteLength,
   }));
   await deleteFile(oldKey);
 }
