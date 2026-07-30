@@ -306,7 +306,11 @@ export function GalleryView({ items, isLoading }: GalleryViewProps) {
             onOpen={() =>
               selectedKeys.size > 0
                 ? toggleSelected(item.s3Key)
-                : navigate(`/preview/${encodeURIComponent(item.s3Key)}`)
+                : navigate(
+                    `/preview/${encodeURIComponent(item.s3Key)}${
+                      item.mimeType ? `?type=${encodeURIComponent(item.mimeType)}` : ""
+                    }`
+                  )
             }
             onDownload={() => handleDownload(item.s3Key, item.filename)}
             selected={selectedKeys.has(item.s3Key)}
