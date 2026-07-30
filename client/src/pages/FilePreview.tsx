@@ -21,7 +21,7 @@ export default function FilePreview() {
   const key = decodeURIComponent(params.key ?? "");
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
 
-  const settingsQuery = trpc.system.settings.useQuery();
+  const settingsQuery = trpc.files.settings.useQuery();
   const workerUrl = settingsQuery.data?.workerUrl ?? null;
   const getDownloadUrl = trpc.files.getDownloadUrl.useMutation();
 
