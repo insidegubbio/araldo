@@ -891,7 +891,14 @@ var filesRouter = router({
     return { ok: true };
   }),
   getDownloadUrl: protectedProcedure.input(z2.object({ key: z2.string().min(1) })).mutation(async ({ input, ctx }) => {
-    const url = await getDownloadPresignedUrl(input.key);
+    let url;
+    if (ENV.workerUrl) {
+      const base = ENV.workerUrl.replace(/\/+$/, "");
+      const encodedKey = input.key.split("/").map(encodeURIComponent).join("/");
+      url = `${base}/${encodedKey}`;
+    } else {
+      url = await getDownloadPresignedUrl(input.key);
+    }
     await incrementAccessCount(input.key);
     await notifyWorker({
       key: input.key,
@@ -1056,7 +1063,7 @@ var filesRouter = router({
       bucket: ENV.s3Bucket,
       region: ENV.s3Region,
       endpoint: ENV.s3Endpoint,
-      workerUrl: ENV.workerUrl ? "configured" : null,
+      workerUrl: ENV.workerUrl || null,
       version: APP_VERSION
     };
   })

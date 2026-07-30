@@ -104,6 +104,8 @@ export default function Dashboard() {
     { search: debouncedSearch, page, pageSize, prefix: currentPrefix },
     { enabled: isAuthenticated, refetchOnWindowFocus: false }
   );
+  const settingsQuery = trpc.system.settings.useQuery();
+  const workerUrl = settingsQuery.data?.workerUrl ?? null;
   const getDownloadUrl = trpc.files.getDownloadUrl.useMutation();
   const deleteMutation = trpc.files.delete.useMutation({
     onSuccess: () => {
@@ -193,9 +195,17 @@ export default function Dashboard() {
 
   const handleDownload = async (key: string, filename: string) => {
     try {
-      const { downloadUrl } = await getDownloadUrl.mutateAsync({ key });
+      let url: string;
+      if (workerUrl) {
+        const base = workerUrl.replace(/\/+$/, "");
+        const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+        url = `${base}/${encodedKey}`;
+      } else {
+        const res = await getDownloadUrl.mutateAsync({ key });
+        url = res.downloadUrl;
+      }
       const a = document.createElement("a");
-      a.href = downloadUrl;
+      a.href = url;
       a.download = filename;
       a.click();
     } catch {
@@ -542,14 +552,7 @@ export default function Dashboard() {
           </>
         )}
 
-        {activeTab === "gallery" && (
-          <GalleryView
-            items={data?.items ?? []}
-            isLoading={isLoading}
-            currentPrefix={currentPrefix}
-            onMoved={() => utils.files.list.invalidate()}
-          />
-        )}
+        {activeTab === "gallery" && <GalleryView items={data?.items ?? []} isLoading={isLoading} />}
 
         {activeTab === "analytics" && <AnalyticsView />}
 
