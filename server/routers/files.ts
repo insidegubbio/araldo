@@ -17,6 +17,7 @@ import {
 } from "../db";
 import { deleteFile, getDownloadPresignedUrl, getUploadPresignedUrl, listFiles, configureBucketCors, listAllKeysUnderPrefix } from "../s3";
 import { notifyWorker } from "../worker";
+import { generateThumbnail, getThumbnailKey, isThumbnailable, thumbnailExists } from "../thumbinails";
 
 export const filesRouter = router({
   list: protectedProcedure
@@ -138,6 +139,9 @@ export const filesRouter = router({
       if (db_meta) {
         await upsertFileMetadata({ ...db_meta, size: input.size });
       }
+      if (db_meta?.mimeType && isThumbnailable(db_meta.mimeType)) {
+        generateThumbnail(input.key, db_meta.mimeType).catch(() => {});
+      }
       return { ok: true };
     }),
   
@@ -174,6 +178,21 @@ export const filesRouter = router({
         userId: ctx.user.id,
         timestamp: new Date().toISOString(),
       });
+      return { downloadUrl: url };
+    }),
+
+  getThumbnailUrl: protectedProcedure
+    .input(z.object({ key: z.string().min(1), mimeType: z.string().nullable() }))
+    .mutation(async ({ input }) => {
+      if (isThumbnailable(input.mimeType) && (await thumbnailExists(input.key))) {
+        const url = await getDownloadPresignedUrl(getThumbnailKey(input.key));
+        return { downloadUrl: url };
+      }
+      // No thumbnail yet
+      if (isThumbnailable(input.mimeType)) {
+        generateThumbnail(input.key, input.mimeType!).catch(() => {});
+      }
+      const url = await getDownloadPresignedUrl(input.key);
       return { downloadUrl: url };
     }),
 
