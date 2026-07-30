@@ -409,7 +409,7 @@ export const filesRouter = router({
       bucket: ENV.s3Bucket,
       region: ENV.s3Region,
       endpoint: ENV.s3Endpoint,
-      workerUrl: ENV.workerUrl ? "configured" : null,
+      workerUrl: ENV.workerUrl || null,
       version: APP_VERSION,
     };
   }),
