@@ -8,6 +8,7 @@ import { FloatingTabBar, type TabId } from "@/components/FloatingTabBar";
 import { GalleryView } from "@/components/GalleryView";
 import { AnalyticsView } from "@/components/AnalyticsView";
 import { SettingsView } from "@/components/SettingsView";
+import { MoveToFolderDialog } from "@/components/MoveToFolderDialog";
 import { trpc } from "@/lib/trpc";
 import {
   AlertDialog,
@@ -41,6 +42,7 @@ import {
   Upload,
   FolderPlus,
   Folder,
+  FolderInput,
   Pencil,
   X,
 } from "lucide-react";
@@ -77,6 +79,8 @@ export default function Dashboard() {
   const [currentPrefix, setCurrentPrefix] = useState("");
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+  const [moveKeys, setMoveKeys] = useState<string[]>([]);
+  const [showMoveDialog, setShowMoveDialog] = useState(false);
   const pageSize = 20;
 
   useEffect(() => {
@@ -146,6 +150,20 @@ export default function Dashboard() {
     },
     onError: (e) => toast.error(e.message),
   });
+  const moveManyMutation = trpc.files.moveMany.useMutation({
+    onSuccess: (result) => {
+      if (result.failed.length > 0) {
+        toast.warning(`${result.moved} spostati, ${result.failed.length} non riusciti`);
+      } else {
+        toast.success(`${result.moved} file spostat${result.moved === 1 ? "o" : "i"}`);
+      }
+      utils.files.list.invalidate();
+      setSelectedKeys(new Set());
+      setMoveKeys([]);
+      setShowMoveDialog(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const deleteFolderMutation = trpc.files.deleteFolder.useMutation({
     onSuccess: () => {
       toast.success("Cartella eliminata");
@@ -155,8 +173,12 @@ export default function Dashboard() {
     onError: (e) => toast.error(e.message),
   });
   const renameFolderMutation = trpc.files.renameFolder.useMutation({
-    onSuccess: () => {
-      toast.success("Cartella rinominata");
+    onSuccess: (result) => {
+      if (result.failed > 0) {
+        toast.warning(`${result.renamed} file rinominati, ${result.failed} non riusciti`);
+      } else {
+        toast.success("Cartella rinominata");
+      }
       utils.files.list.invalidate();
       setFolderRenameTarget(null);
       setFolderRenameValue("");
@@ -183,6 +205,11 @@ export default function Dashboard() {
       currentFileKeys.forEach((k) => next.add(k));
       return next;
     });
+  };
+
+  const openMoveDialog = (keys: string[]) => {
+    setMoveKeys(keys);
+    setShowMoveDialog(true);
   };
 
   const handleBulkDownload = async () => {
@@ -368,6 +395,13 @@ export default function Dashboard() {
                     Scarica
                   </button>
                   <button
+                    onClick={() => openMoveDialog(Array.from(selectedKeys))}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md border border-border hover:bg-background transition-colors"
+                  >
+                    <FolderInput className="w-3.5 h-3.5" />
+                    Sposta
+                  </button>
+                  <button
                     onClick={() => setBulkDeleteConfirm(true)}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors"
                   >
@@ -511,6 +545,13 @@ export default function Dashboard() {
                           title="Rinomina"
                         >
                           <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => openMoveDialog([file.s3Key])}
+                          className="p-1.5 rounded hover:bg-muted transition-colors"
+                          title="Sposta"
+                        >
+                          <FolderInput className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => setDeleteKey(file.s3Key)}
@@ -727,6 +768,20 @@ export default function Dashboard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <MoveToFolderDialog
+        open={showMoveDialog}
+        onOpenChange={(o) => {
+          setShowMoveDialog(o);
+          if (!o) setMoveKeys([]);
+        }}
+        count={moveKeys.length}
+        initialPrefix={currentPrefix}
+        isMoving={moveManyMutation.isPending}
+        onConfirm={(destinationPrefix) =>
+          moveManyMutation.mutate({ keys: moveKeys, destinationPrefix })
+        }
+      />
     </div>
   );
 }
