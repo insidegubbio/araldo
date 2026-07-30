@@ -25,7 +25,7 @@ function buildWorkerUrl(workerBase: string, key: string): string {
 
 export function GalleryView({ items, isLoading }: GalleryViewProps) {
   const [, navigate] = useLocation();
-  const settingsQuery = trpc.system.settings.useQuery();
+  const settingsQuery = trpc.files.settings.useQuery();
   const workerUrl = settingsQuery.data?.workerUrl ?? null;
 
   const getDownloadUrl = trpc.files.getDownloadUrl.useMutation();
