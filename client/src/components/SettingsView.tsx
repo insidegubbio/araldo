@@ -4,9 +4,27 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Copy, Check, Loader2 } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Copy, Check, Loader2, ImageDown, Folder } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { MoveToFolderDialog } from "@/components/MoveToFolderDialog";
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+}
 
 export function SettingsView() {
   const { user } = useAuth();
@@ -19,6 +37,66 @@ export function SettingsView() {
     },
     onError: (e) => toast.error(e.message),
   });
+
+  const [showFolderPicker, setShowFolderPicker] = useState(false);
+  const [optimizePrefix, setOptimizePrefix] = useState<string | null>(null);
+  const [maxWidth, setMaxWidth] = useState("1920");
+  const [quality, setQuality] = useState("80");
+  const [convertToWebp, setConvertToWebp] = useState(true);
+  const [optimizeStats, setOptimizeStats] = useState<{
+    processed: number;
+    skipped: number;
+    failed: number;
+    originalBytes: number;
+    newBytes: number;
+  } | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [remaining, setRemaining] = useState(0);
+
+  const optimizeMutation = trpc.files.optimizeImages.useMutation({
+    onSuccess: (result) => {
+      setOptimizeStats((prev) => ({
+        processed: (prev?.processed ?? 0) + result.processed,
+        skipped: (prev?.skipped ?? 0) + result.skipped,
+        failed: (prev?.failed ?? 0) + result.failed,
+        originalBytes: (prev?.originalBytes ?? 0) + result.originalBytes,
+        newBytes: (prev?.newBytes ?? 0) + result.newBytes,
+      }));
+      setHasMore(result.hasMore);
+      setRemaining(result.remaining);
+      if (result.processed === 0 && result.skipped === 0 && result.failed === 0) {
+        toast.info("Nessuna immagine da ottimizzare in questa cartella");
+      } else if (!result.hasMore) {
+        toast.success(`Ottimizzazione completata: ${result.processed} immagini ridotte`);
+      } else {
+        toast.success(`${result.processed} immagini ottimizzate, altre ${result.remaining} in coda`);
+      }
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const runOptimize = () => {
+    if (optimizePrefix === null) return;
+    optimizeMutation.mutate({
+      prefix: optimizePrefix,
+      maxWidth: Number(maxWidth),
+      quality: Number(quality),
+      convertToWebp,
+    });
+  };
+
+  const handlePickFolder = (prefix: string) => {
+    setOptimizePrefix(prefix);
+    setOptimizeStats(null);
+    setHasMore(false);
+    setRemaining(0);
+    setShowFolderPicker(false);
+  };
+
+  const savedPercent =
+    optimizeStats && optimizeStats.originalBytes > 0
+      ? Math.round((1 - optimizeStats.newBytes / optimizeStats.originalBytes) * 100)
+      : 0;
 
   const copyToClipboard = (text: string, field: string) => {
     navigator.clipboard.writeText(text);
@@ -119,12 +197,129 @@ export function SettingsView() {
         </Card>
       )}
 
+      <Card className="p-6">
+        <h3 className="font-serif text-lg mb-1 flex items-center gap-2">
+          <ImageDown className="w-4 h-4" />
+          Ottimizza immagini per il web
+        </h3>
+        <p className="text-xs text-muted-foreground mb-4">
+          Ridimensiona e ricomprime le immagini di una cartella per ridurne il peso. Le
+          immagini più piccole del risultato ottimizzato vengono lasciate invariate.
+        </p>
+
+        <div className="space-y-4">
+          <div>
+            <Label className="text-xs text-muted-foreground block mb-1">Cartella</Label>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowFolderPicker(true)}
+              className="w-full sm:w-auto justify-start gap-2"
+            >
+              <Folder className="w-4 h-4" />
+              {optimizePrefix === null
+                ? "Scegli cartella…"
+                : optimizePrefix === ""
+                  ? "Home (radice)"
+                  : optimizePrefix.replace(/\/$/, "")}
+            </Button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <Label className="text-xs text-muted-foreground block mb-1">
+                Larghezza massima
+              </Label>
+              <Select value={maxWidth} onValueChange={setMaxWidth}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1280">1280 px</SelectItem>
+                  <SelectItem value="1920">1920 px (consigliato)</SelectItem>
+                  <SelectItem value="2560">2560 px</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground block mb-1">Qualità</Label>
+              <Select value={quality} onValueChange={setQuality}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="60">60 (più leggera)</SelectItem>
+                  <SelectItem value="80">80 (consigliata)</SelectItem>
+                  <SelectItem value="90">90 (più definita)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 p-3 border border-border rounded-lg">
+            <div>
+              <p className="text-sm font-medium">Converti in WebP</p>
+              <p className="text-xs text-muted-foreground">
+                Formato moderno, in genere il 25-35% più leggero di JPEG a parità di qualità.
+                Se disattivato, mantiene JPEG/PNG.
+              </p>
+            </div>
+            <Switch checked={convertToWebp} onCheckedChange={setConvertToWebp} />
+          </div>
+
+          <Button
+            onClick={runOptimize}
+            disabled={optimizePrefix === null || optimizeMutation.isPending}
+            className="w-full sm:w-auto"
+          >
+            {optimizeMutation.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : hasMore ? (
+              `Continua (${remaining} rimanenti)`
+            ) : (
+              "Avvia ottimizzazione"
+            )}
+          </Button>
+
+          {optimizeStats && (
+            <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3 space-y-1">
+              <p>
+                <span className="font-medium text-foreground">{optimizeStats.processed}</span>{" "}
+                immagini ottimizzate
+                {optimizeStats.skipped > 0 && `, ${optimizeStats.skipped} già ottimali`}
+                {optimizeStats.failed > 0 && `, ${optimizeStats.failed} non riuscite`}
+              </p>
+              {optimizeStats.processed > 0 && (
+                <p>
+                  {formatBytes(optimizeStats.originalBytes)} →{" "}
+                  {formatBytes(optimizeStats.newBytes)}{" "}
+                  <span className="font-medium text-foreground">
+                    (-{savedPercent}%, risparmiati {formatBytes(optimizeStats.originalBytes - optimizeStats.newBytes)})
+                  </span>
+                </p>
+              )}
+              {hasMore && <p>Ci sono ancora {remaining} immagini da elaborare, premi di nuovo per continuare.</p>}
+            </div>
+          )}
+        </div>
+      </Card>
+
       <Card className="p-6 bg-muted/50">
         <h3 className="font-serif text-lg mb-2">Informazioni</h3>
         <p className="text-xs text-muted-foreground">
           Araldo v{settings?.version ?? "—"} • Supporto PWA
         </p>
       </Card>
+
+      <MoveToFolderDialog
+        open={showFolderPicker}
+        onOpenChange={setShowFolderPicker}
+        count={0}
+        title="Scegli cartella da ottimizzare"
+        description="Naviga fino alla cartella con le immagini da ottimizzare"
+        confirmLabel="Seleziona questa cartella"
+        onConfirm={handlePickFolder}
+      />
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { BottomNav } from "@/components/BottomNav";
 import { trpc } from "@/lib/trpc";
 import { ArrowLeft, Download, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useLocation, useParams } from "wouter";
+import { useLocation, useParams, useSearch } from "wouter";
 import { toast } from "sonner";
 
 function buildWorkerUrl(workerBase: string, key: string): string {
@@ -18,10 +18,13 @@ export default function FilePreview() {
   const { isAuthenticated, loading } = useAuth();
   const [, navigate] = useLocation();
   const params = useParams<{ key: string }>();
+  const search = useSearch();
   const key = decodeURIComponent(params.key ?? "");
+  const mimeTypeFromQuery = new URLSearchParams(search).get("type");
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [workerFailed, setWorkerFailed] = useState(false);
 
-  const settingsQuery = trpc.system.settings.useQuery();
+  const settingsQuery = trpc.files.settings.useQuery();
   const workerUrl = settingsQuery.data?.workerUrl ?? null;
   const getDownloadUrl = trpc.files.getDownloadUrl.useMutation();
 
@@ -32,18 +35,23 @@ export default function FilePreview() {
   useEffect(() => {
     if (!key || !isAuthenticated) return;
 
-    if (workerUrl) {
+    if (workerUrl && !workerFailed) {
       setDownloadUrl(buildWorkerUrl(workerUrl, key));
-    } else if (workerUrl === null && settingsQuery.isFetched) {
+    } else if ((workerUrl === null || workerFailed) && settingsQuery.isFetched) {
       getDownloadUrl.mutateAsync({ key }).then((r) => setDownloadUrl(r.downloadUrl)).catch(() => {
         toast.error("Impossibile ottenere il link di download");
       });
     }
-  }, [key, isAuthenticated, workerUrl, settingsQuery.isFetched]);
+  }, [key, isAuthenticated, workerUrl, workerFailed, settingsQuery.isFetched]);
 
   const ext = key.split(".").pop()?.toLowerCase() ?? "";
-  const isImage = ["jpg", "jpeg", "png", "gif", "webp", "avif", "svg"].includes(ext);
-  const isPdf = ext === "pdf";
+  const mime = mimeTypeFromQuery ?? "";
+  const isImage =
+    mime.startsWith("image/") ||
+    (!mime && ["jpg", "jpeg", "png", "gif", "webp", "avif", "svg", "heic", "heif"].includes(ext));
+  const isVideo =
+    mime.startsWith("video/") || (!mime && ["mp4", "mov", "webm", "m4v"].includes(ext));
+  const isPdf = mime === "application/pdf" || (!mime && ext === "pdf");
   const isText = ["txt", "md", "csv", "log", "json", "js", "ts", "html", "css"].includes(ext);
   const isPending = !downloadUrl && (!settingsQuery.isFetched || getDownloadUrl.isPending);
 
@@ -91,6 +99,23 @@ export default function FilePreview() {
               src={downloadUrl}
               alt={key}
               className="max-w-full max-h-[70vh] rounded-lg border border-border object-contain"
+              onError={() => {
+                //worker didn't have the original cached/mirrored
+                if (workerUrl && !workerFailed) setWorkerFailed(true);
+              }}
+            />
+          </div>
+        )}
+
+        {downloadUrl && isVideo && (
+          <div className="flex items-center justify-center">
+            <video
+              src={downloadUrl}
+              controls
+              className="max-w-full max-h-[70vh] rounded-lg border border-border"
+              onError={() => {
+                if (workerUrl && !workerFailed) setWorkerFailed(true);
+              }}
             />
           </div>
         )}
@@ -103,7 +128,7 @@ export default function FilePreview() {
           />
         )}
 
-        {downloadUrl && !isImage && !isPdf && (
+        {downloadUrl && !isImage && !isVideo && !isPdf && (
           <div className="p-6 border border-border rounded-xl bg-muted text-center">
             <p className="text-muted-foreground text-sm mb-4">
               Anteprima non disponibile per questo tipo di file.

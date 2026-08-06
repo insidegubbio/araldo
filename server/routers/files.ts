@@ -15,8 +15,19 @@ import {
   markWorkerTracked,
   upsertFileMetadata,
 } from "../db";
-import { deleteFile, getDownloadPresignedUrl, getUploadPresignedUrl, listFiles, configureBucketCors, listAllKeysUnderPrefix } from "../s3";
+import {
+  deleteFile,
+  getDownloadPresignedUrl,
+  getUploadPresignedUrl,
+  listFiles,
+  configureBucketCors,
+  listAllKeysUnderPrefix,
+  getObjectBuffer,
+  uploadBuffer,
+} from "../s3";
 import { notifyWorker } from "../worker";
+import { generateThumbnail, getThumbnailKey, isThumbnailable, thumbnailExists, deleteThumbnail } from "../thumbinails";
+import { isOptimizableImageKey, optimizeImageBuffer } from "../imageOptimize";
 
 export const filesRouter = router({
   list: protectedProcedure
@@ -138,6 +149,9 @@ export const filesRouter = router({
       if (db_meta) {
         await upsertFileMetadata({ ...db_meta, size: input.size });
       }
+      if (db_meta?.mimeType && isThumbnailable(db_meta.mimeType)) {
+        generateThumbnail(input.key, db_meta.mimeType).catch(() => {});
+      }
       return { ok: true };
     }),
   
@@ -174,6 +188,21 @@ export const filesRouter = router({
         userId: ctx.user.id,
         timestamp: new Date().toISOString(),
       });
+      return { downloadUrl: url };
+    }),
+
+  getThumbnailUrl: protectedProcedure
+    .input(z.object({ key: z.string().min(1), mimeType: z.string().nullable() }))
+    .mutation(async ({ input }) => {
+      if (isThumbnailable(input.mimeType) && (await thumbnailExists(input.key))) {
+        const url = await getDownloadPresignedUrl(getThumbnailKey(input.key));
+        return { downloadUrl: url };
+      }
+      // No thumbnail yet
+      if (isThumbnailable(input.mimeType)) {
+        generateThumbnail(input.key, input.mimeType!).catch(() => {});
+      }
+      const url = await getDownloadPresignedUrl(input.key);
       return { downloadUrl: url };
     }),
 
@@ -389,6 +418,95 @@ export const filesRouter = router({
       return { ok: true, newPrefix: normalizedNew };
     }),
 
+  optimizeImages: protectedProcedure
+    .input(
+      z.object({
+        prefix: z.string().optional().default(""),
+        maxWidth: z.number().int().min(200).max(4000).optional().default(1920),
+        quality: z.number().int().min(1).max(100).optional().default(80),
+        convertToWebp: z.boolean().optional().default(true),
+        batchSize: z.number().int().min(1).max(100).optional().default(40),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const normalizedPrefix =
+        input.prefix && !input.prefix.endsWith("/") ? `${input.prefix}/` : input.prefix;
+
+      const allKeys = await listAllKeysUnderPrefix(normalizedPrefix);
+      const imageKeys = allKeys.filter(isOptimizableImageKey);
+      const batch = imageKeys.slice(0, input.batchSize);
+
+      let processed = 0;
+      let skipped = 0;
+      let originalBytes = 0;
+      let newBytes = 0;
+      const failed: string[] = [];
+
+      for (const key of batch) {
+        try {
+          const original = await getObjectBuffer(key);
+          const originalSize = original.byteLength;
+          const ext = key.split(".").pop()?.toLowerCase() ?? "jpg";
+
+          const { buffer, contentType, extension } = await optimizeImageBuffer(original, ext, {
+            maxWidth: input.maxWidth,
+            quality: input.quality,
+            convertToWebp: input.convertToWebp,
+          });
+
+          if (buffer.byteLength >= originalSize) {
+            skipped++;
+            continue;
+          }
+
+          const changedFormat = extension !== ext;
+          const newKey = changedFormat ? key.replace(/\.[^./]+$/, `.${extension}`) : key;
+
+          await uploadBuffer(newKey, buffer, contentType);
+          if (changedFormat) {
+            await deleteFile(key);
+            await deleteThumbnail(key);
+          }
+
+          const oldMeta = await getFileMetadata(key);
+          await deleteFileMetadata(key);
+          const newFilename = changedFormat
+            ? (oldMeta?.filename ?? newKey.split("/").pop() ?? newKey).replace(/\.[^./]+$/, `.${extension}`)
+            : oldMeta?.filename ?? newKey.split("/").pop() ?? newKey;
+
+          await upsertFileMetadata({
+            s3Key: newKey,
+            filename: newFilename,
+            size: buffer.byteLength,
+            mimeType: contentType,
+            uploadedBy: oldMeta?.uploadedBy ?? ctx.user.id,
+            uploadedAt: oldMeta?.uploadedAt ?? new Date(),
+          });
+          
+          generateThumbnail(newKey, contentType).catch(() => {});
+
+          originalBytes += originalSize;
+          newBytes += buffer.byteLength;
+          processed++;
+        } catch {
+          failed.push(key);
+        }
+      }
+
+      const remaining = imageKeys.length - batch.length;
+      return {
+        processed,
+        skipped,
+        failed: failed.length,
+        originalBytes,
+        newBytes,
+        savedBytes: originalBytes - newBytes,
+        remaining: Math.max(0, remaining),
+        hasMore: remaining > 0,
+        totalImagesFound: imageKeys.length,
+      };
+    }),
+
   storageStats: protectedProcedure.query(async () => {
     const { totalSize, fileCount } = await calculateBucketSize();
     return {
@@ -409,7 +527,7 @@ export const filesRouter = router({
       bucket: ENV.s3Bucket,
       region: ENV.s3Region,
       endpoint: ENV.s3Endpoint,
-      workerUrl: ENV.workerUrl ? "configured" : null,
+      workerUrl: ENV.workerUrl || null,
       version: APP_VERSION,
     };
   }),
