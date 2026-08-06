@@ -240,17 +240,30 @@ export default function Dashboard() {
     }
   };
 
+  const getFileExtension = (filename: string) => {
+    const dotIdx = filename.lastIndexOf(".");
+    return dotIdx > 0 ? filename.slice(dotIdx) : "";
+  };
+
+  const getFileBasename = (filename: string) => {
+    const dotIdx = filename.lastIndexOf(".");
+    return dotIdx > 0 ? filename.slice(0, dotIdx) : filename;
+  };
+
   const handleRename = () => {
     if (!renameTarget) return;
-    if (!renameValue.trim()) {
+    const trimmed = renameValue.trim();
+    if (!trimmed) {
       toast.error("Nome file non valido");
       return;
     }
-    if (renameValue.trim() === renameTarget.filename) {
+    const ext = getFileExtension(renameTarget.filename);
+    const newName = trimmed.includes(".") ? trimmed : trimmed + ext;
+    if (newName === renameTarget.filename) {
       setRenameTarget(null);
       return;
     }
-    renameMutation.mutate({ oldKey: renameTarget.key, newName: renameValue.trim() });
+    renameMutation.mutate({ oldKey: renameTarget.key, newName });
   };
 
   const handleRenameFolder = () => {
@@ -339,6 +352,7 @@ export default function Dashboard() {
               <div className="mb-8 animate-fade-in">
                 <UploadDropzone
                   folder={currentPrefix.replace(/\/$/, "")}
+                  existingFilenames={data?.items?.map((f) => f.filename) ?? []}
                   onUploaded={() => {
                     utils.files.list.invalidate();
                     setShowUpload(false);
@@ -539,7 +553,7 @@ export default function Dashboard() {
                         <button
                           onClick={() => {
                             setRenameTarget({ key: file.s3Key, filename: file.filename });
-                            setRenameValue(file.filename);
+                            setRenameValue(getFileBasename(file.filename));
                           }}
                           className="p-1.5 rounded hover:bg-muted transition-colors"
                           title="Rinomina"
@@ -683,15 +697,22 @@ export default function Dashboard() {
           <DialogHeader>
             <DialogTitle>Rinomina file</DialogTitle>
           </DialogHeader>
-          <input
-            type="text"
-            value={renameValue}
-            onChange={(e) => setRenameValue(e.target.value)}
-            placeholder="Nuovo nome file"
-            className="w-full px-3 py-2 border border-border rounded-lg text-sm"
-            onKeyDown={(e) => e.key === "Enter" && handleRename()}
-            autoFocus
-          />
+          <div className="space-y-1">
+            <input
+              type="text"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              placeholder="Nuovo nome file"
+              className="w-full px-3 py-2 border border-border rounded-lg text-sm"
+              onKeyDown={(e) => e.key === "Enter" && handleRename()}
+              autoFocus
+            />
+            {renameTarget && getFileExtension(renameTarget.filename) && !renameValue.includes(".") && (
+              <p className="text-xs text-muted-foreground">
+                Estensione {getFileExtension(renameTarget.filename)} aggiunta automaticamente
+              </p>
+            )}
+          </div>
           <DialogFooter>
             <button
               onClick={() => setRenameTarget(null)}
