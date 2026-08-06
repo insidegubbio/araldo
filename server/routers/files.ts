@@ -283,15 +283,33 @@ export const filesRouter = router({
   rename: protectedProcedure
     .input(z.object({ oldKey: z.string().min(1), newName: z.string().min(1).max(512) }))
     .mutation(async ({ input, ctx }) => {
-      const newKey = input.oldKey.includes("/")
-        ? input.oldKey.split("/").slice(0, -1).join("/") + "/" + input.newName
-        : input.newName;
+      const safeName = input.newName
+        .normalize("NFKD")
+        .replace(/[^\w.\- ]/g, "_")
+        .replace(/^\.+/, "")
+        .trim()
+        .slice(0, 200) || `file_${Date.now()}`;
+
+      const oldBasename = input.oldKey.split("/").pop() ?? "";
+      const oldExt = oldBasename.includes(".") ? "." + oldBasename.split(".").pop() : "";
+      const newExt = safeName.includes(".") ? "" : oldExt;
+      const finalName = safeName + newExt;
+
+      const prefix = input.oldKey.includes("/")
+        ? input.oldKey.split("/").slice(0, -1).join("/") + "/"
+        : "";
+      const newKey = prefix + finalName;
+
+      if (newKey === input.oldKey) {
+        return { ok: true, newKey };
+      }
+
       const oldMeta = await getFileMetadata(input.oldKey);
       await renameFile(input.oldKey, newKey);
       await deleteFileMetadata(input.oldKey);
       await upsertFileMetadata({
         s3Key: newKey,
-        filename: input.newName,
+        filename: finalName,
         size: oldMeta?.size ?? 0,
         mimeType: oldMeta?.mimeType ?? null,
         uploadedBy: oldMeta?.uploadedBy ?? ctx.user.id,
@@ -299,8 +317,8 @@ export const filesRouter = router({
       });
       await notifyWorker({
         key: newKey,
-        filename: input.newName,
-        action: "download",
+        filename: finalName,
+        action: "upload",
         userId: ctx.user.id,
         timestamp: new Date().toISOString(),
       });
