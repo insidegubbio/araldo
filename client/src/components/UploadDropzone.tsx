@@ -7,6 +7,7 @@ import { Progress } from "@/components/ui/progress";
 interface UploadDropzoneProps {
   onUploaded?: () => void;
   folder?: string;
+  existingFilenames?: string[];
 }
 
 interface UploadingFile {
@@ -22,7 +23,7 @@ const RETRY_BASE_DELAY_MS = 800;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export function UploadDropzone({ onUploaded, folder = "" }: UploadDropzoneProps) {
+export function UploadDropzone({ onUploaded, folder = "", existingFilenames = [] }: UploadDropzoneProps) {
   const [dragging, setDragging] = useState(false);
   const [uploads, setUploads] = useState<UploadingFile[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -94,6 +95,20 @@ export function UploadDropzone({ onUploaded, folder = "" }: UploadDropzoneProps)
   const handleFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const fileArray = Array.from(files);
+
+    if (existingFilenames.length > 0) {
+      const existingSet = new Set(existingFilenames.map((n) => n.toLowerCase()));
+      const duplicates = fileArray.filter((f) => existingSet.has(f.name.toLowerCase()));
+      if (duplicates.length > 0) {
+        const names = duplicates.map((f) => f.name).join(", ");
+        toast.warning(
+          duplicates.length === 1
+            ? `"${names}" esiste già in questa cartella e verrà sovrascritto`
+            : `${duplicates.length} file esistono già e verranno sovrascritti: ${names}`
+        );
+      }
+    }
+
     if (fileArray.length > 20) {
       toast.info(`Carico ${fileArray.length} file, ${MAX_CONCURRENT_UPLOADS} alla volta...`);
     }
