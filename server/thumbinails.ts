@@ -18,10 +18,10 @@ export function isThumbnailable(mimeType: string | null | undefined): boolean {
   return THUMBNAILABLE_MIME_PREFIXES.some((prefix) => mimeType.startsWith(prefix));
 }
 
-export async function generateThumbnail(originalKey: string, mimeType: string): Promise<boolean> {
+export async function generateThumbnail(originalKey: string, mimeType: string, sourceBuffer?: Buffer): Promise<boolean> {
   if (!isThumbnailable(mimeType)) return false;
   try {
-    const original = await getObjectBuffer(originalKey);
+    const original = sourceBuffer ?? (await getObjectBuffer(originalKey));
     const resized = await sharp(original)
       .rotate()
       .resize({ width: THUMB_WIDTH, withoutEnlargement: true })
