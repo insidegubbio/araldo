@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Copy, Check, Loader2, ImageDown, Folder } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { MoveToFolderDialog } from "@/components/MoveToFolderDialog";
 
@@ -55,6 +55,9 @@ export function SettingsView() {
   } | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [remaining, setRemaining] = useState(0);
+  const [isAutoRunning, setIsAutoRunning] = useState(false);
+  const stopRequestedRef = useRef(false);
+  const optimizeParamsRef = useRef<Parameters<typeof optimizeMutation.mutate>[0] | null>(null);
 
   const optimizeMutation = trpc.files.optimizeImages.useMutation({
     onSuccess: (result) => {
@@ -67,27 +70,48 @@ export function SettingsView() {
       }));
       setHasMore(result.hasMore);
       setRemaining(result.remaining);
-      if (result.processed === 0 && result.skipped === 0 && result.failed === 0) {
+      if (result.processed === 0 && result.skipped === 0 && result.failed === 0 && !result.hasMore) {
         toast.info("Nessuna immagine da ottimizzare in questa cartella");
-      } else if (!result.hasMore) {
-        toast.success(`Ottimizzazione completata: ${result.processed} immagini ridotte`);
+      }
+      if (result.hasMore && !stopRequestedRef.current && optimizeParamsRef.current) {
+        optimizeMutation.mutate(optimizeParamsRef.current);
       } else {
-        toast.success(`${result.processed} immagini ottimizzate, altre ${result.remaining} in coda`);
+        setIsAutoRunning(false);
+        stopRequestedRef.current = false;
+        if (result.processed > 0 || !result.hasMore) {
+          toast.success(
+            result.hasMore
+              ? `Ottimizzazione interrotta: altre ${result.remaining} immagini in coda`
+              : "Ottimizzazione completata"
+          );
+        }
       }
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => {
+      setIsAutoRunning(false);
+      stopRequestedRef.current = false;
+      toast.error(e.message);
+    },
   });
 
   const runOptimize = () => {
     if (optimizePrefix === null) return;
     if (useDifferentDestination && destinationPrefix === null) return;
-    optimizeMutation.mutate({
+    const params = {
       prefix: optimizePrefix,
       maxWidth: Number(maxWidth),
       quality: Number(quality),
       convertToWebp,
       ...(useDifferentDestination ? { destinationPrefix: destinationPrefix ?? "" } : {}),
-    });
+    };
+    optimizeParamsRef.current = params;
+    stopRequestedRef.current = false;
+    setIsAutoRunning(true);
+    optimizeMutation.mutate(params);
+  };
+
+  const stopOptimize = () => {
+    stopRequestedRef.current = true;
   };
 
   const handlePickFolder = (prefix: string) => {
@@ -319,23 +343,33 @@ export function SettingsView() {
             <Switch checked={convertToWebp} onCheckedChange={setConvertToWebp} />
           </div>
 
-          <Button
-            onClick={runOptimize}
-            disabled={
-              optimizePrefix === null ||
-              (useDifferentDestination && destinationPrefix === null) ||
-              optimizeMutation.isPending
-            }
-            className="w-full sm:w-auto"
-          >
-            {optimizeMutation.isPending ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : hasMore ? (
-              `Continua (${remaining} rimanenti)`
-            ) : (
-              "Avvia ottimizzazione"
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={runOptimize}
+              disabled={
+                optimizePrefix === null ||
+                (useDifferentDestination && destinationPrefix === null) ||
+                isAutoRunning
+              }
+              className="w-full sm:w-auto"
+            >
+              {isAutoRunning ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  {remaining > 0 ? `In corso, ${remaining} rimanenti...` : "In corso..."}
+                </span>
+              ) : hasMore ? (
+                `Continua (${remaining} rimanenti)`
+              ) : (
+                "Avvia ottimizzazione"
+              )}
+            </Button>
+            {isAutoRunning && (
+              <Button variant="outline" onClick={stopOptimize} className="w-full sm:w-auto">
+                Interrompi
+              </Button>
             )}
-          </Button>
+          </div>
 
           {optimizeStats && (
             <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3 space-y-1">
