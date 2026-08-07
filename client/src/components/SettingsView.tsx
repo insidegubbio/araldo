@@ -316,9 +316,10 @@ export function SettingsView() {
         onOpenChange={setShowFolderPicker}
         count={0}
         title="Scegli cartella da ottimizzare"
-        description="Naviga fino alla cartella con le immagini da ottimizzare"
+        description="Clicca 'Seleziona' sulla cartella da ottimizzare, oppure usa la freccia per aprirla"
         confirmLabel="Seleziona questa cartella"
         onConfirm={handlePickFolder}
+        selectionMode
       />
     </div>
   );
