@@ -5,6 +5,7 @@ import { useLocation } from "wouter";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import { MoveToFolderDialog } from "./MoveToFolderDialog";
+import { SortBar, applySortToItems, type SortState } from "./SortBar";
 
 interface GalleryItem {
   s3Key: string;
@@ -181,6 +182,7 @@ export function GalleryView({ items, isLoading }: GalleryViewProps) {
 
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [showMoveDialog, setShowMoveDialog] = useState(false);
+  const [sort, setSort] = useState<SortState>({ field: "uploadedAt", direction: "desc" });
 
   const getDownloadUrl = trpc.files.getDownloadUrl.useMutation();
   const getThumbnailUrl = trpc.files.getThumbnailUrl.useMutation();
@@ -235,12 +237,15 @@ export function GalleryView({ items, isLoading }: GalleryViewProps) {
     []
   );
 
-  const mediaItems = items.filter((f) => {
-    const mime = f.mimeType ?? "";
-    if (mime.startsWith("image/") || mime.startsWith("video/")) return true;
-    const ext = f.filename.split(".").pop()?.toLowerCase() ?? "";
-    return ["jpg","jpeg","png","gif","webp","heic","heif","mp4","mov"].includes(ext);
-  });
+  const mediaItems = applySortToItems(
+    items.filter((f) => {
+      const mime = f.mimeType ?? "";
+      if (mime.startsWith("image/") || mime.startsWith("video/")) return true;
+      const ext = f.filename.split(".").pop()?.toLowerCase() ?? "";
+      return ["jpg","jpeg","png","gif","webp","heic","heif","mp4","mov"].includes(ext);
+    }),
+    sort
+  );
 
   const handleDownload = async (key: string, filename: string) => {
     try {
@@ -295,6 +300,8 @@ export function GalleryView({ items, isLoading }: GalleryViewProps) {
           </div>
         </div>
       )}
+
+      <SortBar sort={sort} onChange={setSort} className="mb-4" />
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
         {mediaItems.map((item) => (

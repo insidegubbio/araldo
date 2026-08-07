@@ -46,7 +46,8 @@ import {
   Pencil,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
+import { SortBar, applySortToItems, type SortState } from "@/components/SortBar";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -81,6 +82,7 @@ export default function Dashboard() {
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
   const [moveKeys, setMoveKeys] = useState<string[]>([]);
   const [showMoveDialog, setShowMoveDialog] = useState(false);
+  const [sort, setSort] = useState<SortState>({ field: "uploadedAt", direction: "desc" });
   const pageSize = 20;
 
   useEffect(() => {
@@ -186,6 +188,11 @@ export default function Dashboard() {
     onError: (e) => toast.error(e.message),
   });
 
+  const sortedItems = useMemo(
+    () => applySortToItems(data?.items ?? [], sort),
+    [data?.items, sort]
+  );
+
   const toggleSelected = (key: string) => {
     setSelectedKeys((prev) => {
       const next = new Set(prev);
@@ -195,7 +202,7 @@ export default function Dashboard() {
     });
   };
 
-  const currentFileKeys = data?.items?.map((f) => f.s3Key) ?? [];
+  const currentFileKeys = sortedItems.map((f) => f.s3Key);
   const allSelected = currentFileKeys.length > 0 && currentFileKeys.every((k) => selectedKeys.has(k));
 
   const toggleSelectAll = () => {
@@ -433,6 +440,8 @@ export default function Dashboard() {
               </div>
             )}
 
+            <SortBar sort={sort} onChange={setSort} className="mb-3" />
+
             <div className="border border-border rounded-xl overflow-hidden">
               {!isLoading && currentFileKeys.length > 0 && (
                 <div className="flex items-center gap-3 px-4 py-2 border-b border-border bg-muted/40">
@@ -457,7 +466,7 @@ export default function Dashboard() {
                     </div>
                   ))}
                 </div>
-              ) : !data?.items?.length && !data?.folders?.length ? (
+              ) : !sortedItems.length && !data?.folders?.length ? (
                 <div className="py-16 text-center">
                   <p className="text-muted-foreground text-sm">
                     {search ? "Nessun file trovato" : "Cartella vuota"}
@@ -503,7 +512,7 @@ export default function Dashboard() {
                       </button>
                     </div>
                   ))}
-                  {data?.items?.map((file) => (
+                  {sortedItems.map((file) => (
                     <div
                       key={file.s3Key}
                       className={`flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors group ${
