@@ -468,7 +468,12 @@ export const filesRouter = router({
       let newBytes = 0;
       const failed: string[] = [];
 
+      const deadline = Date.now() + 20000;
+      let attempted = 0;
+
       for (const key of batch) {
+        if (Date.now() >= deadline) break;
+        attempted++;
         try {
           const original = await getObjectBuffer(key);
           const originalSize = original.byteLength;
@@ -524,7 +529,7 @@ export const filesRouter = router({
         }
       }
 
-      const remaining = imageKeys.length - batch.length;
+      const remaining = imageKeys.length - attempted;
       return {
         processed,
         skipped,
