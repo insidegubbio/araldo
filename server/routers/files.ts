@@ -444,11 +444,19 @@ export const filesRouter = router({
         quality: z.number().int().min(1).max(100).optional().default(80),
         convertToWebp: z.boolean().optional().default(true),
         batchSize: z.number().int().min(1).max(100).optional().default(40),
+        destinationPrefix: z.string().optional(),
       })
     )
     .mutation(async ({ input, ctx }) => {
       const normalizedPrefix =
         input.prefix && !input.prefix.endsWith("/") ? `${input.prefix}/` : input.prefix;
+
+      const inPlace = input.destinationPrefix === undefined;
+      const normalizedDestPrefix = inPlace
+        ? normalizedPrefix
+        : input.destinationPrefix && !input.destinationPrefix.endsWith("/")
+          ? `${input.destinationPrefix}/`
+          : input.destinationPrefix;
 
       const allKeys = await listAllKeysUnderPrefix(normalizedPrefix);
       const imageKeys = allKeys.filter(isOptimizableImageKey);
@@ -477,17 +485,22 @@ export const filesRouter = router({
             continue;
           }
 
+          const relativeKey = key.slice(normalizedPrefix.length);
           const changedFormat = extension !== ext;
-          const newKey = changedFormat ? key.replace(/\.[^./]+$/, `.${extension}`) : key;
+          const destBaseKey = inPlace ? key : `${normalizedDestPrefix}${relativeKey}`;
+          const newKey = changedFormat ? destBaseKey.replace(/\.[^./]+$/, `.${extension}`) : destBaseKey;
+          const sameLocation = newKey === key;
 
           await uploadBuffer(newKey, buffer, contentType);
-          if (changedFormat) {
+          if (sameLocation && changedFormat) {
             await deleteFile(key);
             await deleteThumbnail(key);
           }
 
           const oldMeta = await getFileMetadata(key);
-          await deleteFileMetadata(key);
+          if (sameLocation) {
+            await deleteFileMetadata(key);
+          }
           const newFilename = changedFormat
             ? (oldMeta?.filename ?? newKey.split("/").pop() ?? newKey).replace(/\.[^./]+$/, `.${extension}`)
             : oldMeta?.filename ?? newKey.split("/").pop() ?? newKey;
@@ -498,7 +511,7 @@ export const filesRouter = router({
             size: buffer.byteLength,
             mimeType: contentType,
             uploadedBy: oldMeta?.uploadedBy ?? ctx.user.id,
-            uploadedAt: oldMeta?.uploadedAt ?? new Date(),
+            uploadedAt: sameLocation ? (oldMeta?.uploadedAt ?? new Date()) : new Date(),
           });
           
           generateThumbnail(newKey, contentType).catch(() => {});
