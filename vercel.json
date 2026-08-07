@@ -1,7 +1,7 @@
 {
   "buildCommand": "pnpm run build",
   "outputDirectory": "dist/public",
-  "installCommand": "pnpm install",
+  "installCommand": "pnpm install --config.platform=linux --config.architecture=x64",
   "framework": null,
   "functions": {
     "api/index.js": {
