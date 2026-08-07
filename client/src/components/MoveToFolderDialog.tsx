@@ -22,6 +22,7 @@ interface MoveToFolderDialogProps {
   title?: string;
   description?: string;
   confirmLabel?: string;
+  selectionMode?: boolean;
 }
 
 // dialog for choosing directory
@@ -35,6 +36,7 @@ export function MoveToFolderDialog({
   title,
   description,
   confirmLabel,
+  selectionMode = false,
 }: MoveToFolderDialogProps) {
   const [prefix, setPrefix] = useState(initialPrefix);
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -171,15 +173,38 @@ export function MoveToFolderDialog({
           ) : data?.folders?.length ? (
             <div className="divide-y divide-border">
               {data.folders.map((folder) => (
-                <button
+                <div
                   key={folder.prefix}
-                  onClick={() => setPrefix(folder.prefix)}
                   className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 transition-colors text-left"
                 >
                   <Folder className="w-4 h-4 text-muted-foreground shrink-0 fill-muted-foreground/20" />
                   <span className="flex-1 min-w-0 text-sm truncate">{folder.name}</span>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                </button>
+                  {selectionMode ? (
+                    <>
+                      <button
+                        onClick={() => onConfirm(folder.prefix)}
+                        title="Seleziona questa cartella"
+                        className="px-2 py-0.5 text-xs rounded border border-border hover:bg-foreground hover:text-background transition-colors shrink-0"
+                      >
+                        Seleziona
+                      </button>
+                      <button
+                        onClick={() => setPrefix(folder.prefix)}
+                        title="Apri sottocartelle"
+                        className="p-1 rounded hover:bg-muted transition-colors shrink-0"
+                      >
+                        <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => setPrefix(folder.prefix)}
+                      className="p-1 rounded hover:bg-muted transition-colors shrink-0"
+                    >
+                      <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
           ) : (
