@@ -514,7 +514,7 @@ export const filesRouter = router({
             uploadedAt: sameLocation ? (oldMeta?.uploadedAt ?? new Date()) : new Date(),
           });
           
-          generateThumbnail(newKey, contentType).catch(() => {});
+          generateThumbnail(newKey, contentType, buffer).catch(() => {});
 
           originalBytes += originalSize;
           newBytes += buffer.byteLength;
