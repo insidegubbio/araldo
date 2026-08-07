@@ -40,6 +40,9 @@ export function SettingsView() {
 
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [optimizePrefix, setOptimizePrefix] = useState<string | null>(null);
+  const [useDifferentDestination, setUseDifferentDestination] = useState(false);
+  const [destinationPrefix, setDestinationPrefix] = useState<string | null>(null);
+  const [showDestPicker, setShowDestPicker] = useState(false);
   const [maxWidth, setMaxWidth] = useState("1920");
   const [quality, setQuality] = useState("80");
   const [convertToWebp, setConvertToWebp] = useState(true);
@@ -77,11 +80,13 @@ export function SettingsView() {
 
   const runOptimize = () => {
     if (optimizePrefix === null) return;
+    if (useDifferentDestination && destinationPrefix === null) return;
     optimizeMutation.mutate({
       prefix: optimizePrefix,
       maxWidth: Number(maxWidth),
       quality: Number(quality),
       convertToWebp,
+      ...(useDifferentDestination ? { destinationPrefix: destinationPrefix ?? "" } : {}),
     });
   };
 
@@ -91,6 +96,24 @@ export function SettingsView() {
     setHasMore(false);
     setRemaining(0);
     setShowFolderPicker(false);
+  };
+
+  const handlePickDestination = (prefix: string) => {
+    setDestinationPrefix(prefix);
+    setOptimizeStats(null);
+    setHasMore(false);
+    setRemaining(0);
+    setShowDestPicker(false);
+  };
+
+  const handleToggleDifferentDestination = (checked: boolean) => {
+    setUseDifferentDestination(checked);
+    if (!checked) {
+      setDestinationPrefix(null);
+    }
+    setOptimizeStats(null);
+    setHasMore(false);
+    setRemaining(0);
   };
 
   const savedPercent =
@@ -225,6 +248,35 @@ export function SettingsView() {
             </Button>
           </div>
 
+          <div className="flex items-center justify-between gap-4 p-3 border border-border rounded-lg">
+            <div>
+              <p className="text-sm font-medium">Salva in un'altra cartella</p>
+              <p className="text-xs text-muted-foreground">
+                Se disattivato, le immagini ottimizzate sostituiscono quelle originali nella stessa cartella.
+              </p>
+            </div>
+            <Switch checked={useDifferentDestination} onCheckedChange={handleToggleDifferentDestination} />
+          </div>
+
+          {useDifferentDestination && (
+            <div>
+              <Label className="text-xs text-muted-foreground block mb-1">Cartella di destinazione</Label>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowDestPicker(true)}
+                className="w-full sm:w-auto justify-start gap-2"
+              >
+                <Folder className="w-4 h-4" />
+                {destinationPrefix === null
+                  ? "Scegli cartella…"
+                  : destinationPrefix === ""
+                    ? "Home (radice)"
+                    : destinationPrefix.replace(/\/$/, "")}
+              </Button>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <Label className="text-xs text-muted-foreground block mb-1">
@@ -269,7 +321,11 @@ export function SettingsView() {
 
           <Button
             onClick={runOptimize}
-            disabled={optimizePrefix === null || optimizeMutation.isPending}
+            disabled={
+              optimizePrefix === null ||
+              (useDifferentDestination && destinationPrefix === null) ||
+              optimizeMutation.isPending
+            }
             className="w-full sm:w-auto"
           >
             {optimizeMutation.isPending ? (
@@ -319,6 +375,17 @@ export function SettingsView() {
         description="Clicca 'Seleziona' sulla cartella da ottimizzare, oppure usa la freccia per aprirla"
         confirmLabel="Seleziona questa cartella"
         onConfirm={handlePickFolder}
+        selectionMode
+      />
+
+      <MoveToFolderDialog
+        open={showDestPicker}
+        onOpenChange={setShowDestPicker}
+        count={0}
+        title="Scegli cartella di destinazione"
+        description="Clicca 'Seleziona' sulla cartella dove salvare le immagini ottimizzate, oppure usa la freccia per aprirla"
+        confirmLabel="Seleziona questa cartella"
+        onConfirm={handlePickDestination}
         selectionMode
       />
     </div>
