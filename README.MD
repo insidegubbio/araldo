@@ -4,11 +4,11 @@ file manager web per bucket s3 e provider compatibili (aws s3, backblaze b2, clo
 
 ## caratteristiche
 
-- autenticazione oauth con controllo accessi basato su ruoli (admin, user)
+- autenticazione oauth con controllo accessi
 - lista file con ricerca e paginazione
 - upload drag and drop con progress bar
 - creazione cartelle e rinomina file
-- eliminazione file con conferma (solo admin)
+- eliminazione file con conferma
 - download tramite url pre firmati, senza esporre le chiavi s3 al client
 - anteprima file diretta in browser (immagini, pdf)
 - vista galleria con griglia per immagini e video
