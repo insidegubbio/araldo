@@ -106,19 +106,35 @@ export const filesRouter = router({
         filename: z.string().min(1).max(512),
         contentType: z.string().min(1).max(256),
         folder: z.string().optional().default(""),
+        relativePath: z.string().optional().default(""),
       })
     )
     .mutation(async ({ input, ctx }) => {
       //keep the original filename readable in the S3 key itself
-      const safeName = input.filename
-        .normalize("NFKD")
-        .replace(/[^\w.\- ]/g, "_")
-        .replace(/^\.+/, "")
-        .trim()
-        .slice(0, 200) || `file_${Date.now()}`;
+      const sanitizeSegment = (segment: string) =>
+        segment
+          .normalize("NFKD")
+          .replace(/[^\w.\- ]/g, "_")
+          .replace(/^\.+/, "")
+          .trim()
+          .slice(0, 200);
+
+      const safeName = sanitizeSegment(input.filename) || `file_${Date.now()}`;
+
+      // relativePath carries the subfolder structure of a dragged/selected folder
+      // (e.g. "sub/nested"), each segment sanitized on its own so separators
+      // are kept while unsafe characters or traversal attempts are stripped
+      const safeSubDirs = input.relativePath
+        .split("/")
+        .map((segment) => segment.trim())
+        .filter((segment) => segment.length > 0 && segment !== "." && segment !== "..")
+        .map(sanitizeSegment)
+        .filter(Boolean);
+      const subDir = safeSubDirs.length > 0 ? `${safeSubDirs.join("/")}/` : "";
+
       const uniqueKey = input.folder
-        ? `${input.folder}/${safeName}`
-        : `${safeName}`;
+        ? `${input.folder}/${subDir}${safeName}`
+        : `${subDir}${safeName}`;
       // browser PUTs directly to S3 using this presigned url
       const url = await getUploadPresignedUrl(uniqueKey, input.contentType);
       await upsertFileMetadata({
