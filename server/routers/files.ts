@@ -38,7 +38,6 @@ export const filesRouter = router({
     )
     .query(async ({ input }) => {
       const isSearching = input.search.trim().length > 0;
-      // A search looks across the whole bucket; plain browsing is scoped to the current folder.
       const s3Prefix = isSearching ? "" : input.prefix;
 
       const [s3Result, dbResult] = await Promise.all([
@@ -46,7 +45,6 @@ export const filesRouter = router({
         listFilesMetadata(input.prefix, input.search, input.page, input.pageSize),
       ]);
 
-      // merge s3 data with db metadata
       const s3Map = new Map(s3Result.items.map((f) => [f.key, f]));
       const enriched = dbResult.items.map((meta) => {
         const s3 = s3Map.get(meta.s3Key);
@@ -65,7 +63,7 @@ export const filesRouter = router({
         gif: "image/gif", webp: "image/webp", heic: "image/heic",
         heif: "image/heif", mp4: "video/mp4", mov: "video/quicktime",
       };
-      
+
       const s3Only = s3Result.items
         .filter((f) => !dbKeys.has(f.key))
         .filter((f) => !input.search || f.filename.toLowerCase().includes(input.search.toLowerCase()))
@@ -94,7 +92,6 @@ export const filesRouter = router({
         total: dbResult.total + s3Only.length,
         page: input.page,
         pageSize: input.pageSize,
-        // Subfolders of the current prefix
         folders: isSearching ? [] : s3Result.folders,
         prefix: input.prefix,
       };
@@ -110,7 +107,6 @@ export const filesRouter = router({
       })
     )
     .mutation(async ({ input, ctx }) => {
-      //keep the original filename readable in the S3 key itself
       const sanitizeSegment = (segment: string) =>
         segment
           .normalize("NFKD")
@@ -121,9 +117,6 @@ export const filesRouter = router({
 
       const safeName = sanitizeSegment(input.filename) || `file_${Date.now()}`;
 
-      // relativePath carries the subfolder structure of a dragged/selected folder
-      // (e.g. "sub/nested"), each segment sanitized on its own so separators
-      // are kept while unsafe characters or traversal attempts are stripped
       const safeSubDirs = input.relativePath
         .split("/")
         .map((segment) => segment.trim())
@@ -135,7 +128,6 @@ export const filesRouter = router({
       const uniqueKey = input.folder
         ? `${input.folder}/${subDir}${safeName}`
         : `${subDir}${safeName}`;
-      // browser PUTs directly to S3 using this presigned url
       const url = await getUploadPresignedUrl(uniqueKey, input.contentType);
       await upsertFileMetadata({
         s3Key: uniqueKey,
@@ -167,28 +159,56 @@ export const filesRouter = router({
       }
       return { ok: true };
     }),
-  
+
   getUploadUrls: protectedProcedure
     .input(z.object({
       files: z.array(z.object({
-        filename: z.string(),
-        contentType: z.string(),
+        filename: z.string().min(1).max(512),
+        contentType: z.string().min(1).max(256),
+        relativePath: z.string().optional().default(""),
       })).max(50),
       folder: z.string().optional().default(""),
     }))
     .mutation(async ({ input, ctx }) => {
+      const sanitizeSegment = (s: string) =>
+        s.normalize("NFKD").replace(/[^\w.\- ]/g, "_").replace(/^\.+/, "").trim().slice(0, 200);
+
       const results = await Promise.all(input.files.map(async (f) => {
-        const safeName = f.filename.normalize("NFKD")
-          .replace(/[^\w.\- ]/g, "_").trim().slice(0, 200) || `file_${Date.now()}`;
-        const key = input.folder ? `${input.folder}/${Date.now()}-${safeName}` : `${Date.now()}-${safeName}`;
+        const safeName = sanitizeSegment(f.filename) || `file_${Date.now()}`;
+        const safeSubDirs = f.relativePath
+          .split("/")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0 && s !== "." && s !== "..")
+          .map(sanitizeSegment)
+          .filter(Boolean);
+        const subDir = safeSubDirs.length > 0 ? `${safeSubDirs.join("/")}/` : "";
+        const key = input.folder
+          ? `${input.folder}/${subDir}${safeName}`
+          : `${subDir}${safeName}`;
+
         const url = await getUploadPresignedUrl(key, f.contentType);
-        await upsertFileMetadata({ s3Key: key, filename: f.filename, size: 0,
-          mimeType: f.contentType, uploadedBy: ctx.user.id, uploadedAt: new Date() });
+        await upsertFileMetadata({
+          s3Key: key,
+          filename: f.filename,
+          size: 0,
+          mimeType: f.contentType,
+          uploadedBy: ctx.user.id,
+          uploadedAt: new Date(),
+        });
         return { uploadUrl: url, key };
       }));
+
+      await notifyWorker({
+        key: input.folder || "",
+        filename: `batch:${input.files.length}`,
+        action: "upload",
+        userId: ctx.user.id,
+        timestamp: new Date().toISOString(),
+      });
+
       return results;
     }),
-  
+
   getDownloadUrl: protectedProcedure
     .input(z.object({ key: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
@@ -211,7 +231,6 @@ export const filesRouter = router({
         const url = await getDownloadPresignedUrl(getThumbnailKey(input.key));
         return { downloadUrl: url };
       }
-      // No thumbnail yet
       if (isThumbnailable(input.mimeType)) {
         generateThumbnail(input.key, input.mimeType!).catch(() => {});
       }
