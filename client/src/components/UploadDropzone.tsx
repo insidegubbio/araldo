@@ -26,6 +26,7 @@ interface FileToUpload {
 const MAX_CONCURRENT_UPLOADS = 4;
 const MAX_RETRIES = 4;
 const RETRY_BASE_DELAY_MS = 800;
+const BATCH_SIZE = 30;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -48,7 +49,6 @@ async function traverseEntry(
     const readBatch = () =>
       new Promise<FileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject));
 
-    // readEntries must be called repeatedly until it returns an empty array
     let entries: FileSystemEntry[] = [];
     while (true) {
       const batch = await readBatch();
@@ -100,20 +100,13 @@ export function UploadDropzone({ onUploaded, folder = "", existingFilenames = []
   const [uploads, setUploads] = useState<UploadingFile[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
-  const getUploadUrl = trpc.files.getUploadUrl.useMutation();
+  const getUploadUrls = trpc.files.getUploadUrls.useMutation();
   const confirmUpload = trpc.files.confirmUpload.useMutation();
 
   const updateUpload = (id: string, patch: Partial<UploadingFile>) =>
     setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, ...patch } : u)));
 
-  const uploadOnce = async (file: File, relativePath: string, id: string) => {
-    const { uploadUrl, key } = await getUploadUrl.mutateAsync({
-      filename: file.name,
-      contentType: file.type || "application/octet-stream",
-      folder,
-      relativePath,
-    });
-    updateUpload(id, { status: "uploading", progress: 0 });
+  const uploadToS3 = async (file: File, uploadUrl: string, id: string): Promise<void> => {
     await new Promise<void>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("PUT", uploadUrl);
@@ -122,14 +115,25 @@ export function UploadDropzone({ onUploaded, folder = "", existingFilenames = []
         if (e.lengthComputable)
           updateUpload(id, { progress: Math.round((e.loaded / e.total) * 100) });
       };
-      xhr.onload = () => (xhr.status < 300 ? resolve() : reject(new Error(`HTTP ${xhr.status}`)));
+      xhr.onload = () => {
+        if (xhr.status === 429) {
+          const retryAfter = parseInt(xhr.getResponseHeader("Retry-After") ?? "0", 10);
+          reject(Object.assign(new Error("429"), { retryAfter }));
+        } else if (xhr.status < 300) {
+          resolve();
+        } else {
+          reject(new Error(`HTTP ${xhr.status}`));
+        }
+      };
       xhr.onerror = () => reject(new Error("network error"));
       xhr.send(file);
     });
-    await confirmUpload.mutateAsync({ key, size: file.size });
   };
 
-  const uploadFile = async ({ file, relativePath }: FileToUpload) => {
+  const uploadFile = async (
+    { file, relativePath }: FileToUpload,
+    prefetchedUrl?: { uploadUrl: string; key: string }
+  ) => {
     const id = crypto.randomUUID();
     const displayName = relativePath ? `${relativePath}/${file.name}` : file.name;
     setUploads((prev) => [
@@ -137,36 +141,68 @@ export function UploadDropzone({ onUploaded, folder = "", existingFilenames = []
       { id, name: file.name, relativePath, progress: 0, status: "pending" },
     ]);
 
+    let urlData = prefetchedUrl;
+
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        await uploadOnce(file, relativePath, id);
+        if (!urlData) {
+          const [result] = await getUploadUrls.mutateAsync({
+            files: [{ filename: file.name, contentType: file.type || "application/octet-stream", relativePath }],
+            folder,
+          });
+          urlData = result;
+        }
+
+        updateUpload(id, { status: "uploading", progress: 0 });
+        await uploadToS3(file, urlData.uploadUrl, id);
+        await confirmUpload.mutateAsync({ key: urlData.key, size: file.size });
         updateUpload(id, { status: "done", progress: 100 });
         toast.success(`${displayName} caricato`);
         onUploaded?.();
         return;
-      } catch (err) {
+      } catch (err: any) {
+        urlData = undefined;
         const isLastAttempt = attempt === MAX_RETRIES;
         if (isLastAttempt) {
           updateUpload(id, { status: "error" });
           toast.error(`Errore caricando ${displayName} (dopo ${MAX_RETRIES + 1} tentativi)`);
         } else {
-          // esponential backoff: 0.8s, 1.6s, ...
-          await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
+          const retryAfterMs = err.retryAfter
+            ? err.retryAfter * 1000
+            : RETRY_BASE_DELAY_MS * 2 ** attempt;
+          await sleep(retryAfterMs);
         }
       }
     }
   };
 
-  const runQueue = async (files: FileToUpload[]) => {
+  const runQueue = async (items: FileToUpload[]) => {
+    const urlMap = new Map<number, { uploadUrl: string; key: string }>();
+
+    for (let i = 0; i < items.length; i += BATCH_SIZE) {
+      const batch = items.slice(i, i + BATCH_SIZE);
+      try {
+        const results = await getUploadUrls.mutateAsync({
+          files: batch.map((item) => ({
+            filename: item.file.name,
+            contentType: item.file.type || "application/octet-stream",
+            relativePath: item.relativePath,
+          })),
+          folder,
+        });
+        results.forEach((r, j) => urlMap.set(i + j, r));
+      } catch {
+      }
+    }
+
     let cursor = 0;
     const worker = async () => {
-      while (cursor < files.length) {
-        const item = files[cursor];
-        cursor += 1;
-        await uploadFile(item);
+      while (cursor < items.length) {
+        const idx = cursor++;
+        await uploadFile(items[idx], urlMap.get(idx));
       }
     };
-    const workers = Array.from({ length: Math.min(MAX_CONCURRENT_UPLOADS, files.length) }, worker);
+    const workers = Array.from({ length: Math.min(MAX_CONCURRENT_UPLOADS, items.length) }, worker);
     await Promise.all(workers);
   };
 
@@ -236,7 +272,7 @@ export function UploadDropzone({ onUploaded, folder = "", existingFilenames = []
           ref={folderInputRef}
           type="file"
           multiple
-          // @ts-ignore - non-standard attributes needed to enable folder selection in supporting browsers
+          // @ts-ignore
           webkitdirectory=""
           directory=""
           className="hidden"
